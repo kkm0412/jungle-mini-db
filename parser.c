@@ -17,12 +17,12 @@ Plan parse_sql(const char *sql) {
     Plan plan = {0};
 
     if (starts_with(sql, "select * from")) {
-        /* 흐름: 2.1 SQL 타입 판별 -> 2.2 SELECT SQL 파싱 */
+        /* 흐름: 2.1 SQL 타입 판별 -> 2.2 SELECT 테이블명 추출 */
         return parse_select(sql);
     }
 
     if (starts_with(sql, "insert into")) {
-        /* 흐름: 2.1 SQL 타입 판별 -> 2.2 INSERT SQL 파싱 */
+        /* 흐름: 2.1 SQL 타입 판별 -> 2.3 INSERT 테이블명과 값 목록 추출 */
         return parse_insert(sql);
     }
 
@@ -30,7 +30,7 @@ Plan parse_sql(const char *sql) {
     return plan;
 }
 
-/* 2.2 SQL 파싱: `select * from 테이블;`에서 테이블 이름을 뽑아낸다. */
+/* 2.2 SELECT 테이블명 추출: `select * from 테이블;`에서 테이블 이름을 뽑아낸다. */
 static Plan parse_select(const char *sql) {
     const char *prefix = "select * from";
     Plan plan = {0};
@@ -42,7 +42,7 @@ static Plan parse_select(const char *sql) {
     remove_trailing_semicolon(trimmed_table_name);
     trimmed_table_name = trim(trimmed_table_name);
 
-    /* 흐름: 2.2 SQL 파싱 -> 3.1 테이블 파일 매핑 */
+    /* 흐름: 2.2 SELECT 테이블명 추출 -> 4.1 테이블 이름 매핑 */
     if (find_table(trimmed_table_name) == NULL) {
         set_error(&plan, "존재하지 않는 테이블입니다");
         return plan;
@@ -53,7 +53,7 @@ static Plan parse_select(const char *sql) {
     return plan;
 }
 
-/* 2.2 SQL 파싱: `insert into 테이블 values (...);`에서 테이블과 값 목록을 뽑아낸다. */
+/* 2.3 INSERT 테이블명과 값 목록 추출: `insert into 테이블 values (...);`에서 테이블과 값 목록을 뽑아낸다. */
 static Plan parse_insert(const char *sql) {
     const char *prefix = "insert into";
     Plan plan = {0};
@@ -91,7 +91,7 @@ static Plan parse_insert(const char *sql) {
 
     values = trim(values);
 
-    /* 흐름: 2.2 SQL 파싱 -> 3.1 테이블 파일 매핑 */
+    /* 흐름: 2.3 INSERT 테이블명과 값 목록 추출 -> 4.1 테이블 이름 매핑 */
     table = find_table(table_name);
     if (table == NULL) {
         set_error(&plan, "존재하지 않는 테이블입니다");

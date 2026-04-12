@@ -13,7 +13,7 @@
 static int run_repl(void);
 static char *trim(char *text);
 
-/* 고정 데이터: 테이블 이름을 컬럼 목록과 CSV 경로에 연결한다. */
+/* 고정 데이터: 4.1 테이블 이름 매핑에서 사용하는 테이블 메타데이터다. */
 static const TableMetadata GLOBAL_TABLES[] = {
     {"users", {"id", "name"}, 2, PROJECT_CSV_PATH("data/users.csv")},
     {"posts", {"id", "title"}, 2, PROJECT_CSV_PATH("data/posts.csv")},
@@ -22,11 +22,11 @@ static const TableMetadata GLOBAL_TABLES[] = {
 static const int GLOBAL_TABLE_COUNT = sizeof(GLOBAL_TABLES) / sizeof(GLOBAL_TABLES[0]);
 
 int main(void) {
-    /* 흐름: 프로그램 시작점을 REPL 흐름으로 연결한다. */
+    /* 흐름: 프로그램 시작점을 1. REPL SQL 입력 처리로 연결한다. */
     return run_repl();
 }
 
-/* 1. CLI SQL 입력 처리: REPL에서 SQL 한 줄을 받아 파서와 실행기로 넘긴다. */
+/* 1. REPL SQL 입력 처리: SQL 한 줄을 받아 파싱과 실행으로 넘긴다. */
 static int run_repl(void) {
     char input[MAX_INPUT_SIZE];
 
@@ -34,6 +34,7 @@ static int run_repl(void) {
         char *sql;
         Plan plan;
 
+        /* 흐름: 1.1 프롬프트 출력 -> 1.2 SQL 한 줄 읽기 */
         printf("mini-db> ");
         if (fgets(input, sizeof(input), stdin) == NULL) {
             printf("\n");
@@ -42,23 +43,24 @@ static int run_repl(void) {
 
         sql = trim(input);
 
+        /* 흐름: 1.2 SQL 한 줄 읽기 -> 1.3 종료 명령 처리 */
         if (strcmp(sql, "exit") == 0 || strcmp(sql, "quit") == 0) {
             return 0;
         }
 
-        /* 흐름: 1. CLI SQL 입력 처리 -> 2.1 SQL 타입 판별 */
+        /* 흐름: 1.3 종료 명령 처리 -> 2.1 SQL 타입 판별 */
         plan = parse_sql(sql);
         if (plan.type == QUERY_INVALID) {
             printf("%s\n", plan.error_message);
             continue;
         }
 
-        /* 흐름: 2.2 SQL 파싱 결과 -> 2.3 실행 분기 */
+        /* 흐름: 2. SQL 파싱 결과 -> 3.1 실행 분기 */
         execute_plan(&plan);
     }
 }
 
-/* 3.1 테이블 파일 매핑: 테이블 이름을 컬럼 정보와 CSV 파일 경로로 바꾼다. */
+/* 4.1 테이블 이름 매핑: 테이블 이름을 컬럼 정보와 CSV 파일 경로로 바꾼다. */
 const TableMetadata *find_table(const char *table_name) {
     for (int i = 0; i < GLOBAL_TABLE_COUNT; i++) {
         if (strcmp(GLOBAL_TABLES[i].name, table_name) == 0) {
