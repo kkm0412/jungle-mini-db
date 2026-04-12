@@ -43,12 +43,12 @@ static int run_repl(void) {
 
         sql = trim(input);
 
-        /* 흐름: 1.2 SQL 한 줄 읽기 -> 1.3 종료 명령 처리 */
-        if (strcmp(sql, "exit") == 0 || strcmp(sql, "quit") == 0) {
+        /* 흐름: 1.2 SQL 한 줄 읽기 -> 1.3 특수 명령 처리 */
+        if (strcmp(sql, ".exit") == 0) {
             return 0;
         }
 
-        /* 흐름: 1.3 종료 명령 처리 -> 2.1 SQL 타입 판별 */
+        /* 흐름: 1.3 특수 명령 처리 -> 2.1 SQL 타입 판별 */
         plan = parse_sql(sql);
         if (plan.type == QUERY_INVALID) {
             printf("%s\n", plan.error_message);

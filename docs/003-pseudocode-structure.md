@@ -59,10 +59,7 @@ def main()
         sql = read user input
         sql = trim sql
 
-        if sql == "exit"
-            return 0
-
-        if sql == "quit"
+        if sql == ".exit"
             return 0
 
         plan = parse_sql(sql)
@@ -76,7 +73,7 @@ def main()
 3단계:
 
 1. 사용자에게 SQL을 입력받고 앞뒤 공백과 개행을 제거한다.
-2. `exit` 또는 `quit`이면 프로그램을 종료한다.
+2. 특수 명령은 마침표(`.`)로 시작하며, 현재 지원되는 `.exit`이면 프로그램을 종료한다.
 3. 그 외 입력은 `parse_sql(sql)`로 파싱한 뒤 `execute_plan(plan)`으로 실행한다.
 
 ## SQL 파서
@@ -279,7 +276,7 @@ csv_file_path = GLOBAL_CSV_FILES[table_name]
 main
 └── REPL loop
     ├── read sql
-    ├── exit / quit이면 종료
+    ├── .exit이면 종료
     ├── parse_sql
     │   ├── parse_select
     │   └── parse_insert
