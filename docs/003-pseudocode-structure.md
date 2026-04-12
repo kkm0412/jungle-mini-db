@@ -10,7 +10,7 @@
 - 해피케이스 SQL만 처리한다.
 - 테이블은 `users`, `posts`만 존재한다.
 - 테이블별 컬럼은 코드 안에 전역 변수로 하드코딩되어 있다.
-- CSV 파일은 이미 존재한다고 가정한다.
+- CSV 파일은 프로젝트 루트의 `data/` 아래에 이미 존재한다고 가정한다.
 - 모든 값의 타입은 ASCII 범위의 텍스트라고 가정한다.
 
 최소 지원 SQL:
@@ -34,9 +34,11 @@ GLOBAL_COLUMNS = {
     "posts": ["id", "title"]
 }
 
+PROJECT_ROOT_DIR = build-time project root path
+
 GLOBAL_CSV_FILES = {
-    "users": "data/users.csv",
-    "posts": "data/posts.csv"
+    "users": PROJECT_ROOT_DIR + "/data/users.csv",
+    "posts": PROJECT_ROOT_DIR + "/data/posts.csv"
 }
 ```
 
@@ -44,7 +46,7 @@ GLOBAL_CSV_FILES = {
 
 1. 허용 테이블 목록을 전역 변수로 고정한다.
 2. 테이블별 컬럼 목록도 전역 변수로 고정한다.
-3. 테이블 이름으로 CSV 파일 경로를 전역 변수에서 가져온다.
+3. 테이블 이름으로 프로젝트 루트 기준 CSV 파일 경로를 전역 변수에서 가져온다.
 
 ## main REPL
 
@@ -55,6 +57,7 @@ def main()
     while true
         print "mini-db> "
         sql = read user input
+        sql = trim sql
 
         if sql == "exit"
             return 0
@@ -72,7 +75,7 @@ def main()
 
 3단계:
 
-1. 사용자에게 SQL을 입력받는다.
+1. 사용자에게 SQL을 입력받고 앞뒤 공백과 개행을 제거한다.
 2. `exit` 또는 `quit`이면 프로그램을 종료한다.
 3. 그 외 입력은 `parse_sql(sql)`로 파싱한 뒤 `execute_plan(plan)`으로 실행한다.
 
@@ -143,7 +146,9 @@ select * from users;
 ```text
 def parse_select(sql)
     table_name = remove "select * from" from sql
+    table_name = trim table_name
     table_name = remove ";" from table_name
+    table_name = trim table_name
 
     if table_name not in GLOBAL_TABLES
         return_err "존재하지 않는 테이블입니다"
@@ -173,9 +178,9 @@ def execute_select(plan)
 
 3단계:
 
-1. 파서는 `select * from` 앞부분과 끝의 `;`를 제거해서 테이블 이름만 남긴다.
+1. 파서는 `select * from` 앞부분과 끝의 `;`를 제거하고 앞뒤 공백을 정리해서 테이블 이름만 남긴다.
 2. 파서는 테이블 이름이 `GLOBAL_TABLES`에 있는지 확인하고 `SELECT` 계획을 만든다.
-3. 실행기는 계획의 테이블 이름으로 CSV 경로를 가져와 전체 행을 출력한다.
+3. 실행기는 계획의 테이블 이름으로 프로젝트 루트 기준 CSV 경로를 가져와 컬럼명과 전체 행을 출력한다.
 
 ## INSERT 최소 처리
 
@@ -201,12 +206,16 @@ insert into users values (1, kim);
 def parse_insert(sql)
     rest = remove "insert into" from sql
     table_name = text before "values" in rest
+    table_name = trim table_name
     values = text after "values" in rest
+    values = trim values
 
     values = remove "(" from values
     values = remove ")" from values
     values = remove ";" from values
+    values = trim values
     value_list = split values by ","
+    value_list = trim each value
 
     if table_name not in GLOBAL_TABLES
         return_err "존재하지 않는 테이블입니다"
@@ -231,14 +240,16 @@ def parse_insert(sql)
 def execute_insert(plan)
     csv_file_path = GLOBAL_CSV_FILES[plan.table_name]
 
-    file = open csv_file_path in append mode
+    file = open csv_file_path in append/read mode
     if file cannot be opened
         print "CSV 파일을 열 수 없습니다"
         return
 
+    if file is not empty and last character is not newline
+        write newline to file
+
     write plan.values as one CSV row to file
     close file
-    print "1개 행이 추가되었습니다"
 ```
 
 3단계:
@@ -258,7 +269,7 @@ csv_file_path = GLOBAL_CSV_FILES[table_name]
 
 3단계:
 
-1. 테이블 이름으로 `GLOBAL_CSV_FILES`에서 CSV 경로를 가져온다.
+1. 테이블 이름으로 `GLOBAL_CSV_FILES`에서 프로젝트 루트 기준 CSV 경로를 가져온다.
 2. INSERT는 이미 존재하는 CSV 파일 끝에 한 줄을 추가한다.
 3. SELECT는 이미 존재하는 CSV 파일 전체를 읽는다.
 
