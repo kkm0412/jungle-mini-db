@@ -1,0 +1,7 @@
+interface:
+  display_name: "Prompt Retro Analysis"
+  short_description: "Analyze prompt logs and author alignment"
+  default_prompt: "Use $prompt-retro-analysis to compare prompt prefixes with Git commit authors and evaluate session-based context management from logs/{username}-prompt-log.jsonl."
+
+policy:
+  allow_implicit_invocation: true

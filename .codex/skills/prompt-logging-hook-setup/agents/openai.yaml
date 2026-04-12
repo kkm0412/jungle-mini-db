@@ -1,0 +1,7 @@
+interface:
+  display_name: "Prompt Logging Hook Setup"
+  short_description: "Install and repair a prompt logging hook"
+  default_prompt: "Use $prompt-logging-hook-setup to install or repair a Codex UserPromptSubmit prompt logging hook with git user name prompt prefixes and per-user log files in a target repository."
+
+policy:
+  allow_implicit_invocation: true
