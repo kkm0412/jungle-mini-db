@@ -12,6 +12,7 @@
 /* 파일 안에서만 사용: 아래 핵심 함수들이 호출하는 내부 함수 목록이다. */
 static int run_repl(void);
 static char *trim(char *text);
+static void print_init(void);
 
 /* 고정 데이터: 4.1 테이블 이름 매핑에서 사용하는 테이블 메타데이터다. */
 static const TableMetadata GLOBAL_TABLES[] = {
@@ -22,6 +23,7 @@ static const TableMetadata GLOBAL_TABLES[] = {
 static const int GLOBAL_TABLE_COUNT = sizeof(GLOBAL_TABLES) / sizeof(GLOBAL_TABLES[0]);
 
 int main(void) {
+    print_init(); // 그냥 꾸며주는 코드
     /* 흐름: 프로그램 시작점을 1. REPL SQL 입력 처리로 연결한다. */
     return run_repl();
 }
@@ -90,4 +92,16 @@ static char *trim(char *text) {
     }
 
     return text;
+}
+
+static void print_init(void)
+{
+    printf(" __  __ ___ _   _ ___     ____  ____  \n");
+    printf("|  \\/  |_ _| \\ | |_ _|   |  _ \\| __ ) \n");
+    printf("| |\\/| || ||  \\| || |____| | | |  _ \\ \n");
+    printf("| |  | || || |\\  || |____| |_| | |_) |\n");
+    printf("|_|  |_|___|_| \\_|___|   |____/|____/ \n");
+    printf("\n");
+    printf("Special commands start with '.'. Current command: .exit\n");
+    printf("\n");
 }
