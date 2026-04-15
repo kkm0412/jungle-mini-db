@@ -14,6 +14,9 @@ static void print_columns(const TableMetadata *table);
 static int encode_fixed_row(const Plan *plan, char fixed_row[ROW_SIZE]);
 static int decode_fixed_row(const char fixed_row[ROW_SIZE], char *logical_row, size_t logical_row_size);
 static int parse_id_value(const char *text, int *id);
+static const char *append_fixed_row(const TableMetadata *table, const char fixed_row[ROW_SIZE], RowLocation *location);
+static int read_and_decode_fixed_row(const TableMetadata *table, RowLocation location, char *logical_row,
+                                     size_t logical_row_size);
 static int read_fixed_row_at(const TableMetadata *table, RowLocation location, char fixed_row[ROW_SIZE]);
 
 /* 4.1 실행 분기: 파싱된 계획을 SELECT 또는 INSERT 실행으로 보낸다. */
@@ -87,7 +90,6 @@ static void execute_select_all_fixed_rows(const TableMetadata *table) {
 /* 4.3 SELECT id 조건 조회: B+Tree 인덱스에서 위치를 찾고 해당 row만 읽는다. */
 static void execute_select_by_id(const Plan *plan, const TableMetadata *table) {
     RowLocation location;
-    char fixed_row[ROW_SIZE];
     char logical_row[MAX_INPUT_SIZE];
     int found;
 
@@ -101,8 +103,7 @@ static void execute_select_by_id(const Plan *plan, const TableMetadata *table) {
         return;
     }
 
-    if (!read_fixed_row_at(table, location, fixed_row) ||
-        !decode_fixed_row(fixed_row, logical_row, sizeof(logical_row))) {
+    if (!read_and_decode_fixed_row(table, location, logical_row, sizeof(logical_row))) {
         printf("데이터 파일이 올바르지 않습니다\n");
         return;
     }
@@ -113,9 +114,9 @@ static void execute_select_by_id(const Plan *plan, const TableMetadata *table) {
 /* 4.4 INSERT 행 추가: 고정 길이 row를 파일 끝에 쓰고 인덱스를 갱신한다. */
 static void execute_insert(const Plan *plan) {
     const TableMetadata *table = find_table(plan->table_name);
-    FILE *file;
     RowLocation location;
     char fixed_row[ROW_SIZE];
+    const char *append_error;
     int id;
     int found;
 
@@ -144,26 +145,38 @@ static void execute_insert(const Plan *plan) {
         return;
     }
 
-    file = fopen(table->csv_file_path, "ab+");
-    if (file == NULL) {
-        printf("CSV 파일을 열 수 없습니다\n");
+    append_error = append_fixed_row(table, fixed_row, &location);
+    if (append_error != NULL) {
+        printf("%s\n", append_error);
         return;
     }
-
-    fseek(file, 0, SEEK_END);
-    location.offset = ftell(file);
-    if (location.offset < 0 || location.offset % table->row_size != 0 ||
-        fwrite(fixed_row, 1, ROW_SIZE, file) != ROW_SIZE || fflush(file) != 0) {
-        printf("데이터를 저장할 수 없습니다\n");
-        fclose(file);
-        return;
-    }
-
-    fclose(file);
 
     if (db_index_put(plan->table_name, id, location) != 1) {
         printf("인덱스를 갱신할 수 없습니다\n");
     }
+}
+
+static const char *append_fixed_row(const TableMetadata *table, const char fixed_row[ROW_SIZE], RowLocation *location) {
+    FILE *file = fopen(table->csv_file_path, "ab+");
+
+    if (file == NULL) {
+        return "CSV 파일을 열 수 없습니다";
+    }
+
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return "데이터를 저장할 수 없습니다";
+    }
+
+    location->offset = ftell(file);
+    if (location->offset < 0 || location->offset % table->row_size != 0 ||
+        fwrite(fixed_row, 1, ROW_SIZE, file) != ROW_SIZE || fflush(file) != 0) {
+        fclose(file);
+        return "데이터를 저장할 수 없습니다";
+    }
+
+    fclose(file);
+    return NULL;
 }
 
 /* 내부 구현: SELECT 출력 전에 컬럼명을 CSV 형태로 출력한다. */
@@ -238,6 +251,14 @@ static int parse_id_value(const char *text, int *id) {
 
     *id = (int) parsed;
     return 1;
+}
+
+static int read_and_decode_fixed_row(const TableMetadata *table, RowLocation location, char *logical_row,
+                                     size_t logical_row_size) {
+    char fixed_row[ROW_SIZE];
+
+    return read_fixed_row_at(table, location, fixed_row) &&
+           decode_fixed_row(fixed_row, logical_row, logical_row_size);
 }
 
 /* 5.4 위치 기반 읽기/쓰기: 인덱스가 알려준 byte offset에서 fixed row 하나를 읽는다. */
