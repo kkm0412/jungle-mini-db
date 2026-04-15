@@ -21,9 +21,9 @@ import time
 from pathlib import Path
 
 
-ROW_SIZE = 64
-ROW_DATA_SIZE = ROW_SIZE - 1
-ROW_PADDING = "_"
+FIXED_ROW_SIZE = 64
+FIXED_ROW_DATA_SIZE = FIXED_ROW_SIZE - 1
+FIXED_ROW_PADDING = "_"
 DEFAULT_RECORDS = 1000000
 DEFAULT_SELECT_REPETITIONS = 50
 
@@ -211,10 +211,10 @@ def fixed_user_name(record_id):
 
 def encode_fixed_row(record_id):
     logical_row = "%d,%s," % (record_id, fixed_user_name(record_id))
-    if len(logical_row) > ROW_DATA_SIZE:
+    if len(logical_row) > FIXED_ROW_DATA_SIZE:
         raise ValueError("record %d is too large for fixed row storage" % record_id)
 
-    padded = logical_row + (ROW_PADDING * (ROW_DATA_SIZE - len(logical_row))) + "\n"
+    padded = logical_row + (FIXED_ROW_PADDING * (FIXED_ROW_DATA_SIZE - len(logical_row))) + "\n"
     return padded.encode("ascii")
 
 
@@ -286,16 +286,16 @@ def measure_indexed_select(executable, target_id, repetitions):
 
 
 def decode_fixed_row(raw_row):
-    if len(raw_row) != ROW_SIZE or raw_row[-1:] != b"\n":
+    if len(raw_row) != FIXED_ROW_SIZE or raw_row[-1:] != b"\n":
         raise ValueError("invalid fixed row")
 
-    return raw_row[:ROW_DATA_SIZE].decode("ascii").rstrip(ROW_PADDING).rstrip(",")
+    return raw_row[:FIXED_ROW_DATA_SIZE].decode("ascii").rstrip(FIXED_ROW_PADDING).rstrip(",")
 
 
 def linear_select_by_name(target_name):
     with USERS_CSV.open("rb") as file:
         while True:
-            raw_row = file.read(ROW_SIZE)
+            raw_row = file.read(FIXED_ROW_SIZE)
             if raw_row == b"":
                 break
             logical_row = decode_fixed_row(raw_row)

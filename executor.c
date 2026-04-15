@@ -11,13 +11,12 @@ static void execute_select_all_fixed_rows(const TableMetadata *table);
 static void execute_select_by_id(const Plan *plan, const TableMetadata *table);
 static void execute_insert(const Plan *plan);
 static void print_columns(const TableMetadata *table);
-static int encode_fixed_row(const Plan *plan, char fixed_row[ROW_SIZE]);
-static int decode_fixed_row(const char fixed_row[ROW_SIZE], char *logical_row, size_t logical_row_size);
+static int encode_fixed_row(const Plan *plan, char fixed_row[FIXED_ROW_SIZE]);
+static int decode_fixed_row(const char fixed_row[FIXED_ROW_SIZE], char *logical_row, size_t logical_row_size);
 static int parse_id_value(const char *text, int *id);
-static const char *append_fixed_row(const TableMetadata *table, const char fixed_row[ROW_SIZE], RowLocation *location);
-static int read_and_decode_fixed_row(const TableMetadata *table, RowLocation location, char *logical_row,
-                                     size_t logical_row_size);
-static int read_fixed_row_at(const TableMetadata *table, RowLocation location, char fixed_row[ROW_SIZE]);
+static const char *append_fixed_row(const TableMetadata *table, const char fixed_row[FIXED_ROW_SIZE],RowLocation *location);
+static int read_and_decode_fixed_row(const TableMetadata *table, RowLocation location, char *logical_row,size_t logical_row_size);
+static int read_fixed_row_at(const TableMetadata *table, RowLocation location, char fixed_row[FIXED_ROW_SIZE]);
 
 /* 4.1 실행 분기: 파싱된 계획을 SELECT 또는 INSERT 실행으로 보낸다. */
 void execute_plan(const Plan *plan) {
@@ -59,8 +58,8 @@ static void execute_select(const Plan *plan) {
 /* 4.2 SELECT 전체 조회: 데이터 파일을 고정 길이 row 단위로 읽어 출력한다. */
 static void execute_select_all_fixed_rows(const TableMetadata *table) {
     FILE *file;
-    char fixed_row[ROW_SIZE];
-    char logical_row[MAX_INPUT_SIZE];
+    char fixed_row[FIXED_ROW_SIZE];
+    char logical_row[MAX_LOGICAL_ROW_SIZE];
 
     file = fopen(table->csv_file_path, "rb");
     if (file == NULL) {
@@ -70,13 +69,13 @@ static void execute_select_all_fixed_rows(const TableMetadata *table) {
 
     print_columns(table);
     while (1) {
-        size_t read_size = fread(fixed_row, 1, ROW_SIZE, file);
+        size_t read_size = fread(fixed_row, 1, FIXED_ROW_SIZE, file);
 
         if (read_size == 0) {
             break;
         }
 
-        if (read_size != ROW_SIZE || !decode_fixed_row(fixed_row, logical_row, sizeof(logical_row))) {
+        if (read_size != FIXED_ROW_SIZE || !decode_fixed_row(fixed_row, logical_row, sizeof(logical_row))) {
             printf("데이터 파일이 올바르지 않습니다\n");
             break;
         }
@@ -90,7 +89,7 @@ static void execute_select_all_fixed_rows(const TableMetadata *table) {
 /* 4.3 SELECT id 조건 조회: B+Tree 인덱스에서 위치를 찾고 해당 row만 읽는다. */
 static void execute_select_by_id(const Plan *plan, const TableMetadata *table) {
     RowLocation location;
-    char logical_row[MAX_INPUT_SIZE];
+    char logical_row[MAX_LOGICAL_ROW_SIZE];
     int found;
 
     print_columns(table);
@@ -115,7 +114,7 @@ static void execute_select_by_id(const Plan *plan, const TableMetadata *table) {
 static void execute_insert(const Plan *plan) {
     const TableMetadata *table = find_table(plan->table_name);
     RowLocation location;
-    char fixed_row[ROW_SIZE];
+    char fixed_row[FIXED_ROW_SIZE];
     const char *append_error;
     int id;
     int found;
@@ -156,7 +155,8 @@ static void execute_insert(const Plan *plan) {
     }
 }
 
-static const char *append_fixed_row(const TableMetadata *table, const char fixed_row[ROW_SIZE], RowLocation *location) {
+static const char *append_fixed_row(const TableMetadata *table, const char fixed_row[FIXED_ROW_SIZE],
+                                    RowLocation *location) {
     FILE *file = fopen(table->csv_file_path, "ab+");
 
     if (file == NULL) {
@@ -170,7 +170,7 @@ static const char *append_fixed_row(const TableMetadata *table, const char fixed
 
     location->offset = ftell(file);
     if (location->offset < 0 || location->offset % table->row_size != 0 ||
-        fwrite(fixed_row, 1, ROW_SIZE, file) != ROW_SIZE || fflush(file) != 0) {
+        fwrite(fixed_row, 1, FIXED_ROW_SIZE, file) != FIXED_ROW_SIZE || fflush(file) != 0) {
         fclose(file);
         return "데이터를 저장할 수 없습니다";
     }
@@ -191,14 +191,14 @@ static void print_columns(const TableMetadata *table) {
 }
 
 /* 5.2 고정 길이 row 저장: INSERT 값 목록을 64 bytes fixed row로 변환한다. */
-static int encode_fixed_row(const Plan *plan, char fixed_row[ROW_SIZE]) {
+static int encode_fixed_row(const Plan *plan, char fixed_row[FIXED_ROW_SIZE]) {
     size_t length = 0;
 
-    memset(fixed_row, ROW_PADDING_CHAR, ROW_SIZE);
-    for (int i = 0; i < plan->value_count; i++) {
+    memset(fixed_row, FIXED_ROW_PADDING_CHAR, FIXED_ROW_SIZE);  // 기본 패딩 문자열로 다 설정
+    for (int i = 0; i < plan->value_count; i++) {   // value만큼 반복하면서 fixed_row 버퍼에 row 값 저장하기
         size_t value_length = strlen(plan->values[i]);
 
-        if (length + value_length + 1 > ROW_DATA_SIZE) {
+        if (length + value_length + 1 > FIXED_ROW_DATA_SIZE) {
             return 0;
         }
 
@@ -208,22 +208,22 @@ static int encode_fixed_row(const Plan *plan, char fixed_row[ROW_SIZE]) {
         length++;
     }
 
-    fixed_row[ROW_DATA_SIZE] = '\n';
+    fixed_row[FIXED_ROW_DATA_SIZE] = '\n';
     return 1;
 }
 
 /* 5.3 논리 row 변환: fixed row의 padding을 제거하고 출력용 row로 바꾼다. */
-static int decode_fixed_row(const char fixed_row[ROW_SIZE], char *logical_row, size_t logical_row_size) {
-    int end = ROW_DATA_SIZE - 1;
+static int decode_fixed_row(const char fixed_row[FIXED_ROW_SIZE], char *logical_row, size_t logical_row_size) {
+    int end = FIXED_ROW_DATA_SIZE - 1;
 
-    if (logical_row_size < ROW_SIZE || fixed_row[ROW_DATA_SIZE] != '\n') {
+    if (logical_row_size < FIXED_ROW_SIZE || fixed_row[FIXED_ROW_DATA_SIZE] != '\n') {
         return 0;
     }
 
-    memcpy(logical_row, fixed_row, ROW_DATA_SIZE);
-    logical_row[ROW_DATA_SIZE] = '\0';
+    memcpy(logical_row, fixed_row, FIXED_ROW_DATA_SIZE);
+    logical_row[FIXED_ROW_DATA_SIZE] = '\0';
 
-    while (end >= 0 && logical_row[end] == ROW_PADDING_CHAR) {
+    while (end >= 0 && logical_row[end] == FIXED_ROW_PADDING_CHAR) {
         logical_row[end] = '\0';
         end--;
     }
@@ -255,14 +255,14 @@ static int parse_id_value(const char *text, int *id) {
 
 static int read_and_decode_fixed_row(const TableMetadata *table, RowLocation location, char *logical_row,
                                      size_t logical_row_size) {
-    char fixed_row[ROW_SIZE];
+    char fixed_row[FIXED_ROW_SIZE];
 
     return read_fixed_row_at(table, location, fixed_row) &&
            decode_fixed_row(fixed_row, logical_row, logical_row_size);
 }
 
 /* 5.4 위치 기반 읽기/쓰기: 인덱스가 알려준 byte offset에서 fixed row 하나를 읽는다. */
-static int read_fixed_row_at(const TableMetadata *table, RowLocation location, char fixed_row[ROW_SIZE]) {
+static int read_fixed_row_at(const TableMetadata *table, RowLocation location, char fixed_row[FIXED_ROW_SIZE]) {
     FILE *file;
     size_t read_size;
 
@@ -275,12 +275,12 @@ static int read_fixed_row_at(const TableMetadata *table, RowLocation location, c
         return 0;
     }
 
-    if (fseek(file, location.offset, SEEK_SET) != 0) {
+    if (fseek(file, location.offset, SEEK_SET) != 0) {  //https://en.cppreference.com/w/c/io/fseek
         fclose(file);
         return 0;
     }
 
-    read_size = fread(fixed_row, 1, ROW_SIZE, file);
+    read_size = fread(fixed_row, 1, FIXED_ROW_SIZE, file);
     fclose(file);
-    return read_size == ROW_SIZE;
+    return read_size == FIXED_ROW_SIZE;
 }

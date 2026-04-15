@@ -18,8 +18,8 @@ static void print_init(void);
 
 /* 5.1 테이블 이름 매핑: 테이블별 컬럼, 데이터 파일, 인덱스 파일, row 크기 정보다. */
 static const TableMetadata GLOBAL_TABLES[] = {
-    {"users", {"id", "name"}, 2, PROJECT_CSV_PATH("data/users.csv"), PROJECT_CSV_PATH("data/users.idx"), ROW_SIZE},
-    {"posts", {"id", "title"}, 2, PROJECT_CSV_PATH("data/posts.csv"), PROJECT_CSV_PATH("data/posts.idx"), ROW_SIZE},
+    {"users", {"id", "name"}, 2, PROJECT_CSV_PATH("data/users.csv"), PROJECT_CSV_PATH("data/users.idx"), FIXED_ROW_SIZE},
+    {"posts", {"id", "title"}, 2, PROJECT_CSV_PATH("data/posts.csv"), PROJECT_CSV_PATH("data/posts.idx"), FIXED_ROW_SIZE},
 };
 
 static const int GLOBAL_TABLE_COUNT = sizeof(GLOBAL_TABLES) / sizeof(GLOBAL_TABLES[0]);
@@ -58,7 +58,7 @@ static void shutdown_database(void) {
 
 /* 2. REPL SQL 입력 처리: SQL 한 줄을 받아 파싱과 실행으로 넘긴다. */
 static int run_repl(void) {
-    char input[MAX_INPUT_SIZE];
+    char input[MAX_SQL_INPUT_SIZE];
 
     while (1) {
         char *sql;

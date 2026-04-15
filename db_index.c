@@ -16,8 +16,8 @@ typedef struct {
 /* 내부 구현: 공개 인덱스 흐름을 구성하는 private 함수 목록이다. */
 static int rebuild_index_from_data_file(IndexHandle *handle, char *error_message, size_t error_size);
 static int validate_index_against_data(IndexHandle *handle, char *error_message, size_t error_size);
-static int read_data_row(FILE *file, const TableMetadata *table, long offset, char fixed_row[ROW_SIZE]);
-static int extract_id_from_fixed_row(const char fixed_row[ROW_SIZE], int *id);
+static int read_data_row(FILE *file, const TableMetadata *table, long offset, char fixed_row[FIXED_ROW_SIZE]);
+static int extract_id_from_fixed_row(const char fixed_row[FIXED_ROW_SIZE], int *id);
 static IndexHandle *find_index_handle(const char *table_name);
 static IndexHandle *ensure_index_handle(const TableMetadata *table);
 static int ensure_data_file(const TableMetadata *table, char *error_message, size_t error_size);
@@ -38,7 +38,7 @@ int db_index_open_table(const TableMetadata *table, char *error_message, size_t 
     IndexHandle *handle;
     int validate_result;
 
-    if (table->row_size != ROW_SIZE) {
+    if (table->row_size != FIXED_ROW_SIZE) {
         set_error(error_message, error_size, "지원하지 않는 row size입니다");
         return -1;
     }
@@ -156,7 +156,7 @@ static int rebuild_index_from_data_file(IndexHandle *handle, char *error_message
     }
 
     for (long offset = 0; offset < file_size; offset += handle->table->row_size) {
-        char fixed_row[ROW_SIZE];
+        char fixed_row[FIXED_ROW_SIZE];
         int id;
         long stored_offset = encode_offset_for_index(offset);
 
@@ -190,7 +190,7 @@ static int validate_index_against_data(IndexHandle *handle, char *error_message,
     }
 
     for (long offset = 0; offset < file_size; offset += handle->table->row_size) {
-        char fixed_row[ROW_SIZE];
+        char fixed_row[FIXED_ROW_SIZE];
         int id;
         long stored_offset;
 
@@ -212,7 +212,7 @@ static int validate_index_against_data(IndexHandle *handle, char *error_message,
 }
 
 /* 5.4 위치 기반 읽기/쓰기: 지정한 byte offset에서 fixed row 하나를 읽는다. */
-static int read_data_row(FILE *file, const TableMetadata *table, long offset, char fixed_row[ROW_SIZE]) {
+static int read_data_row(FILE *file, const TableMetadata *table, long offset, char fixed_row[FIXED_ROW_SIZE]) {
     if (fseek(file, offset, SEEK_SET) != 0) {
         return 0;
     }
@@ -221,23 +221,23 @@ static int read_data_row(FILE *file, const TableMetadata *table, long offset, ch
         return 0;
     }
 
-    return fixed_row[ROW_DATA_SIZE] == '\n';
+    return fixed_row[FIXED_ROW_DATA_SIZE] == '\n';
 }
 
 /* 5.3 논리 row 변환: fixed row에서 padding을 제거하고 첫 번째 컬럼 id를 추출한다. */
-static int extract_id_from_fixed_row(const char fixed_row[ROW_SIZE], int *id) {
-    char logical_row[ROW_SIZE];
-    int end = ROW_DATA_SIZE - 1;
+static int extract_id_from_fixed_row(const char fixed_row[FIXED_ROW_SIZE], int *id) {
+    char logical_row[FIXED_ROW_SIZE];
+    int end = FIXED_ROW_DATA_SIZE - 1;
     char *comma;
 
-    if (fixed_row[ROW_DATA_SIZE] != '\n') {
+    if (fixed_row[FIXED_ROW_DATA_SIZE] != '\n') {
         return 0;
     }
 
-    memcpy(logical_row, fixed_row, ROW_DATA_SIZE);
-    logical_row[ROW_DATA_SIZE] = '\0';
+    memcpy(logical_row, fixed_row, FIXED_ROW_DATA_SIZE);
+    logical_row[FIXED_ROW_DATA_SIZE] = '\0';
 
-    while (end >= 0 && logical_row[end] == ROW_PADDING_CHAR) {
+    while (end >= 0 && logical_row[end] == FIXED_ROW_PADDING_CHAR) {
         logical_row[end] = '\0';
         end--;
     }
@@ -311,7 +311,7 @@ static int init_tree(IndexHandle *handle, char *error_message, size_t error_size
 
 /* 내부 구현: thirdparty B+Tree가 사용하는 본 파일과 boot 파일이 모두 있는지 확인한다. */
 static int index_files_exist(const TableMetadata *table) {
-    char boot_path[MAX_INPUT_SIZE];
+    char boot_path[MAX_FILE_PATH_SIZE];
     FILE *index_file;
     FILE *boot_file;
 
@@ -331,7 +331,7 @@ static int index_files_exist(const TableMetadata *table) {
 
 /* 내부 구현: 복구 전에 기존 B+Tree 파일 묶음을 지운다. */
 static void remove_index_files(const TableMetadata *table) {
-    char boot_path[MAX_INPUT_SIZE];
+    char boot_path[MAX_FILE_PATH_SIZE];
 
     snprintf(boot_path, sizeof(boot_path), "%s.boot", table->index_file_path);
     remove(table->index_file_path);

@@ -77,7 +77,7 @@ static Plan parse_select(const char *sql) {
 static Plan parse_insert(const char *sql) {
     Parser parser = make_parser(sql);
     char table_name[MAX_TABLE_NAME_SIZE];
-    char values_text[MAX_INPUT_SIZE];
+    char values_text[MAX_SQL_INPUT_SIZE];
 
     expect_text(&parser, "insert");
     expect_text(&parser, "into");

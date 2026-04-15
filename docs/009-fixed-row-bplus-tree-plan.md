@@ -12,7 +12,7 @@
 
 ## Key Changes
 
-- `mini_db.h`에 `ROW_SIZE = 64`, padding 관련 상수, `WHERE id` 조건을 담을 select plan 필드, `RowLocation` 타입을 추가한다.
+- `mini_db.h`에 `FIXED_ROW_SIZE = 64`, padding 관련 상수, `WHERE id` 조건을 담을 select plan 필드, `RowLocation` 타입을 추가한다.
 - `parser.c`는 기존 `select * from table;`를 유지하고, `select * from table where id = 101;`를 추가 지원한다.
 - `executor.c`는 CSV 줄 단위 읽기/쓰기 대신 64-byte fixed row 단위로 처리한다.
 - B+Tree wrapper 모듈을 새로 추가해 라이브러리 타입을 외부로 노출하지 않는다.

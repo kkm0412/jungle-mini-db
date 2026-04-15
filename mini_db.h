@@ -3,14 +3,16 @@
 
 #include <stddef.h>
 
-#define MAX_INPUT_SIZE 1024
+#define MAX_SQL_INPUT_SIZE 1024
+#define MAX_FILE_PATH_SIZE 1024
 #define MAX_TABLE_NAME_SIZE 32
 #define MAX_VALUES 16
 #define MAX_VALUE_SIZE 128
 #define MAX_ERROR_SIZE 128
-#define ROW_SIZE 64
-#define ROW_DATA_SIZE (ROW_SIZE - 1)
-#define ROW_PADDING_CHAR '_'
+#define FIXED_ROW_SIZE 64
+#define FIXED_ROW_DATA_SIZE (FIXED_ROW_SIZE - 1)
+#define FIXED_ROW_PADDING_CHAR '_'
+#define MAX_LOGICAL_ROW_SIZE FIXED_ROW_SIZE
 
 /* 공유 계약: SQL 처리기가 공유하는 계획 타입이다. */
 typedef enum {
