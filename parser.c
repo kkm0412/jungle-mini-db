@@ -63,16 +63,11 @@ static Plan parse_select(const char *sql) {
     SelectCondition condition = {0};
 
     expect_text(&parser, "select");
-    skip_spaces(&parser);
     expect_char(&parser, '*');
-    skip_spaces(&parser);
     expect_text(&parser, "from");
-    skip_spaces(&parser);
     read_name(&parser, table_name, sizeof(table_name));
-    skip_spaces(&parser);
     condition = read_optional_select_condition(&parser);
     expect_char(&parser, ';');
-    skip_spaces(&parser);
     expect_end(&parser);
 
     return build_select_plan(&parser, table_name, condition);
@@ -85,16 +80,11 @@ static Plan parse_insert(const char *sql) {
     char values_text[MAX_INPUT_SIZE];
 
     expect_text(&parser, "insert");
-    skip_spaces(&parser);
     expect_text(&parser, "into");
-    skip_spaces(&parser);
     read_name(&parser, table_name, sizeof(table_name));
-    skip_spaces(&parser);
     expect_text(&parser, "values");
-    skip_spaces(&parser);
     read_until_semicolon(&parser, values_text, sizeof(values_text));
     expect_char(&parser, ';');
-    skip_spaces(&parser);
     expect_end(&parser);
 
     return build_insert_plan(&parser, table_name, values_text);
@@ -135,10 +125,11 @@ static void skip_spaces(Parser *parser) {
     }
 }
 
-/* 내부 구현: 현재 커서가 지정한 문자열이면 그만큼 앞으로 이동한다. */
+/* 내부 구현: 공백을 건너뛴 뒤 지정한 문자열이면 그만큼 앞으로 이동한다. */
 static void expect_text(Parser *parser, const char *expected) {
     size_t length = strlen(expected);
 
+    skip_spaces(parser);
     if (parser->has_error) {
         return;
     }
@@ -151,8 +142,9 @@ static void expect_text(Parser *parser, const char *expected) {
     parser->cursor += length;
 }
 
-/* 내부 구현: 현재 커서가 지정한 문자이면 한 칸 앞으로 이동한다. */
+/* 내부 구현: 공백을 건너뛴 뒤 지정한 문자이면 한 칸 앞으로 이동한다. */
 static void expect_char(Parser *parser, char expected) {
+    skip_spaces(parser);
     if (parser->has_error) {
         return;
     }
@@ -167,6 +159,7 @@ static void expect_char(Parser *parser, char expected) {
 
 /* 내부 구현: 파싱이 입력 끝까지 도달했는지 확인한다. */
 static void expect_end(Parser *parser) {
+    skip_spaces(parser);
     if (parser->has_error) {
         return;
     }
@@ -181,6 +174,7 @@ static void read_name(Parser *parser, char *buffer, size_t buffer_size) {
     size_t length = 0;
 
     buffer[0] = '\0';
+    skip_spaces(parser);
     if (parser->has_error) {
         return;
     }
@@ -211,6 +205,7 @@ static void read_integer(Parser *parser, int *value) {
     size_t length = 0;
 
     *value = 0;
+    skip_spaces(parser);
     if (parser->has_error) {
         return;
     }
@@ -248,6 +243,7 @@ static void read_until_semicolon(Parser *parser, char *buffer, size_t buffer_siz
     size_t length = 0;
 
     buffer[0] = '\0';
+    skip_spaces(parser);
     if (parser->has_error) {
         return;
     }
@@ -291,19 +287,16 @@ static Plan build_select_plan(Parser *parser, const char *table_name, SelectCond
 static SelectCondition read_optional_select_condition(Parser *parser) {
     SelectCondition condition = {0};
 
+    skip_spaces(parser);
     if (parser->has_error || *parser->cursor == ';') {
         return condition;
     }
 
     condition.type = SELECT_CONDITION_ID_EQUALS;
     expect_text(parser, "where");
-    skip_spaces(parser);
     expect_text(parser, "id");
-    skip_spaces(parser);
     expect_char(parser, '=');
-    skip_spaces(parser);
     read_integer(parser, &condition.id_value);
-    skip_spaces(parser);
 
     return condition;
 }
