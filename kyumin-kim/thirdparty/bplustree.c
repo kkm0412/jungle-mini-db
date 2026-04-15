@@ -38,11 +38,13 @@ static int _block_size;
 static int _max_entries;
 static int _max_order;
 
+/* 노드가 leaf 노드인지 확인한다. */
 static inline int is_leaf(struct bplus_node *node)
 {
         return node->type == BPLUS_TREE_LEAF;
 }
 
+/* 노드 안의 key 배열에서 target의 위치를 이진 탐색한다. */
 static int key_binary_search(struct bplus_node *node, key_t target)
 {
         key_t *arr = key(node);
@@ -66,12 +68,14 @@ static int key_binary_search(struct bplus_node *node, key_t target)
         }
 }
 
+/* 부모 노드에서 특정 key가 가리키는 child 경계 인덱스를 찾는다. */
 static inline int parent_key_index(struct bplus_node *parent, key_t key)
 {
         int index = key_binary_search(parent, key);
         return index >= 0 ? index : -index - 2;
 }
 
+/* 트리의 작은 고정 캐시 풀에서 비어 있는 노드 버퍼 하나를 빌린다. */
 static inline struct bplus_node *cache_refer(struct bplus_tree *tree)
 {
         int i;
@@ -85,6 +89,7 @@ static inline struct bplus_node *cache_refer(struct bplus_tree *tree)
         assert(0);
 }
 
+/* cache_refer()로 빌린 노드 버퍼를 다시 사용 가능 상태로 표시한다. */
 static inline void cache_defer(struct bplus_tree *tree, struct bplus_node *node)
 {
         /* return the node cache borrowed from */
@@ -93,6 +98,7 @@ static inline void cache_defer(struct bplus_tree *tree, struct bplus_node *node)
         tree->used[i] = 0;
 }
 
+/* 공통 노드 필드를 초기화한 새 노드 버퍼를 만든다. */
 static struct bplus_node *node_new(struct bplus_tree *tree)
 {
         struct bplus_node *node = cache_refer(tree);
@@ -104,6 +110,7 @@ static struct bplus_node *node_new(struct bplus_tree *tree)
         return node;
 }
 
+/* 내부 노드(non-leaf) 타입으로 초기화된 새 노드를 만든다. */
 static inline struct bplus_node *non_leaf_new(struct bplus_tree *tree)
 {
         struct bplus_node *node = node_new(tree);
@@ -111,6 +118,7 @@ static inline struct bplus_node *non_leaf_new(struct bplus_tree *tree)
         return node;
 }
 
+/* leaf 타입으로 초기화된 새 노드를 만든다. */
 static inline struct bplus_node *leaf_new(struct bplus_tree *tree)
 {
         struct bplus_node *node = node_new(tree);
@@ -118,6 +126,7 @@ static inline struct bplus_node *leaf_new(struct bplus_tree *tree)
         return node;
 }
 
+/* 파일의 offset 위치에서 노드 하나를 캐시 버퍼로 읽어 온다. */
 static struct bplus_node *node_fetch(struct bplus_tree *tree, off_t offset)
 {
         if (offset == INVALID_OFFSET) {
@@ -130,6 +139,7 @@ static struct bplus_node *node_fetch(struct bplus_tree *tree, off_t offset)
         return node;
 }
 
+/* 파일의 offset 위치에서 노드를 읽되, 캐시 사용 표시를 호출자가 직접 관리할 수 있게 가져온다. */
 static struct bplus_node *node_seek(struct bplus_tree *tree, off_t offset)
 {
         if (offset == INVALID_OFFSET) {
@@ -148,6 +158,7 @@ static struct bplus_node *node_seek(struct bplus_tree *tree, off_t offset)
         assert(0);
 }
 
+/* 노드 내용을 파일에 기록하고 캐시 버퍼를 반납한다. */
 static inline void node_flush(struct bplus_tree *tree, struct bplus_node *node)
 {
         if (node != NULL) {
@@ -157,6 +168,7 @@ static inline void node_flush(struct bplus_tree *tree, struct bplus_node *node)
         }
 }
 
+/* 새 노드가 저장될 파일 offset을 배정한다. */
 static off_t new_node_append(struct bplus_tree *tree, struct bplus_node *node)
 {
         /* assign new offset to the new node */
@@ -173,6 +185,7 @@ static off_t new_node_append(struct bplus_tree *tree, struct bplus_node *node)
         return node->self;
 }
 
+/* 노드를 삭제하고 양쪽 형제 연결을 갱신한 뒤, 해당 블록을 재사용 목록에 넣는다. */
 static void node_delete(struct bplus_tree *tree, struct bplus_node *node,
                         struct bplus_node *left, struct bplus_node *right)
 {
@@ -202,6 +215,7 @@ static void node_delete(struct bplus_tree *tree, struct bplus_node *node,
         cache_defer(tree, node);
 }
 
+/* 부모의 child 포인터를 갱신하고 child의 parent 포인터도 함께 맞춘다. */
 static inline void sub_node_update(struct bplus_tree *tree, struct bplus_node *parent,
                                    int index, struct bplus_node *sub_node)
 {
@@ -211,6 +225,7 @@ static inline void sub_node_update(struct bplus_tree *tree, struct bplus_node *p
         node_flush(tree, sub_node);
 }
 
+/* offset으로 child 노드를 읽어 parent 포인터를 갱신한 뒤 저장한다. */
 static inline void sub_node_flush(struct bplus_tree *tree, struct bplus_node *parent, off_t sub_offset)
 {
         struct bplus_node *sub_node = node_fetch(tree, sub_offset);
@@ -219,6 +234,7 @@ static inline void sub_node_flush(struct bplus_tree *tree, struct bplus_node *pa
         node_flush(tree, sub_node);
 }
 
+/* root부터 leaf까지 내려가며 key에 연결된 data 값을 찾는다. */
 static long bplus_tree_search(struct bplus_tree *tree, key_t key)
 {
         int ret = -1;
@@ -241,6 +257,7 @@ static long bplus_tree_search(struct bplus_tree *tree, key_t key)
         return ret;
 }
 
+/* 현재 노드의 왼쪽에 새 형제 노드를 붙이고 prev/next 링크를 갱신한다. */
 static void left_node_add(struct bplus_tree *tree, struct bplus_node *node, struct bplus_node *left)
 {
         new_node_append(tree, left);
@@ -257,6 +274,7 @@ static void left_node_add(struct bplus_tree *tree, struct bplus_node *node, stru
         node->prev = left->self;
 }
 
+/* 현재 노드의 오른쪽에 새 형제 노드를 붙이고 prev/next 링크를 갱신한다. */
 static void right_node_add(struct bplus_tree *tree, struct bplus_node *node, struct bplus_node *right)
 {
         new_node_append(tree, right);
@@ -273,9 +291,11 @@ static void right_node_add(struct bplus_tree *tree, struct bplus_node *node, str
         node->next = right->self;
 }
 
+/* child 분할 후 부모 노드에 separator key를 올려 넣기 위한 내부 삽입 함수다. */
 static key_t non_leaf_insert(struct bplus_tree *tree, struct bplus_node *node,
                              struct bplus_node *l_ch, struct bplus_node *r_ch, key_t key);
 
+/* 분할된 두 child를 연결할 부모를 만들거나 기존 부모에 split key를 삽입한다. */
 static int parent_node_build(struct bplus_tree *tree, struct bplus_node *l_ch,
                              struct bplus_node *r_ch, key_t key)
 {
@@ -303,6 +323,7 @@ static int parent_node_build(struct bplus_tree *tree, struct bplus_node *l_ch,
         }
 }
 
+/* 내부 노드가 가득 찼을 때 새 key가 split 왼쪽에 들어가는 경우를 처리한다. */
 static key_t non_leaf_split_left(struct bplus_tree *tree, struct bplus_node *node,
                                  struct bplus_node *left, struct bplus_node *l_ch,
                                  struct bplus_node *r_ch, key_t key, int insert, int split)
@@ -349,6 +370,7 @@ static key_t non_leaf_split_left(struct bplus_tree *tree, struct bplus_node *nod
         return split_key;
 }
 
+/* 내부 노드가 가득 찼을 때 새 key가 split 지점에 들어가는 경우를 처리한다. */
 static key_t non_leaf_split_middle(struct bplus_tree *tree, struct bplus_node *node,
                                    struct bplus_node *right, struct bplus_node *l_ch,
                                    struct bplus_node *r_ch, key_t key, int insert, int split)
@@ -384,6 +406,7 @@ static key_t non_leaf_split_middle(struct bplus_tree *tree, struct bplus_node *n
         return split_key;
 }
 
+/* 내부 노드가 가득 찼을 때 새 key가 split 오른쪽에 들어가는 경우를 처리한다. */
 static key_t non_leaf_split_right(struct bplus_tree *tree, struct bplus_node *node,
                                   struct bplus_node *right, struct bplus_node *l_ch,
                                   struct bplus_node *r_ch, key_t key, int insert, int split)
@@ -425,6 +448,7 @@ static key_t non_leaf_split_right(struct bplus_tree *tree, struct bplus_node *no
         return split_key;
 }
 
+/* 여유 공간이 있는 내부 노드에 key와 두 child 포인터를 바로 삽입한다. */
 static void non_leaf_simple_insert(struct bplus_tree *tree, struct bplus_node *node,
                                    struct bplus_node *l_ch, struct bplus_node *r_ch,
                                    key_t key, int insert)
@@ -438,6 +462,7 @@ static void non_leaf_simple_insert(struct bplus_tree *tree, struct bplus_node *n
         node->children++;
 }
 
+/* 내부 노드에 split key를 삽입하고, 필요하면 다시 분할해 부모로 전파한다. */
 static int non_leaf_insert(struct bplus_tree *tree, struct bplus_node *node,
                            struct bplus_node *l_ch, struct bplus_node *r_ch, key_t key)
 {
@@ -473,6 +498,7 @@ static int non_leaf_insert(struct bplus_tree *tree, struct bplus_node *node,
         return 0;
 }
 
+/* leaf가 가득 찼을 때 새 key가 왼쪽 leaf에 들어가는 경우를 처리한다. */
 static key_t leaf_split_left(struct bplus_tree *tree, struct bplus_node *leaf,
                              struct bplus_node *left, key_t key, long data, int insert)
 {
@@ -507,6 +533,7 @@ static key_t leaf_split_left(struct bplus_tree *tree, struct bplus_node *leaf,
         return key(leaf)[0];
 }
 
+/* leaf가 가득 찼을 때 새 key가 오른쪽 leaf에 들어가는 경우를 처리한다. */
 static key_t leaf_split_right(struct bplus_tree *tree, struct bplus_node *leaf,
                               struct bplus_node *right, key_t key, long data, int insert)
 {
@@ -537,6 +564,7 @@ static key_t leaf_split_right(struct bplus_tree *tree, struct bplus_node *leaf,
         return key(right)[0];
 }
 
+/* 여유 공간이 있는 leaf에 key와 data를 정렬 순서에 맞게 삽입한다. */
 static void leaf_simple_insert(struct bplus_tree *tree, struct bplus_node *leaf,
                                key_t key, long data, int insert)
 {
@@ -547,6 +575,7 @@ static void leaf_simple_insert(struct bplus_tree *tree, struct bplus_node *leaf,
         leaf->children++;
 }
 
+/* leaf에 key/data를 삽입하고, leaf가 가득 차면 분할을 부모로 전파한다. */
 static int leaf_insert(struct bplus_tree *tree, struct bplus_node *leaf, key_t key, long data)
 {
         /* Search key location */
@@ -589,6 +618,7 @@ static int leaf_insert(struct bplus_tree *tree, struct bplus_node *leaf, key_t k
         return 0;
 }
 
+/* root부터 삽입 위치 leaf까지 내려가 key/data를 추가한다. */
 static int bplus_tree_insert(struct bplus_tree *tree, key_t key, long data)
 {
         struct bplus_node *node = node_seek(tree, tree->root);
@@ -617,6 +647,7 @@ static int bplus_tree_insert(struct bplus_tree *tree, key_t key, long data)
         return 0;
 }
 
+/* 삭제 후 재분배/병합에 사용할 형제를 선택한다. */
 static inline int sibling_select(struct bplus_node *l_sib, struct bplus_node *r_sib,
                                  struct bplus_node *parent, int i)
 {
@@ -632,6 +663,7 @@ static inline int sibling_select(struct bplus_node *l_sib, struct bplus_node *r_
         }
 }
 
+/* 내부 노드가 부족해졌을 때 왼쪽 형제의 마지막 child를 빌려 온다. */
 static void non_leaf_shift_from_left(struct bplus_tree *tree, struct bplus_node *node,
                                      struct bplus_node *left, struct bplus_node *parent,
                                      int parent_key_index, int remove)
@@ -651,6 +683,7 @@ static void non_leaf_shift_from_left(struct bplus_tree *tree, struct bplus_node 
         left->children--;
 }
 
+/* 내부 노드가 부족해졌을 때 현재 노드를 왼쪽 형제와 병합한다. */
 static void non_leaf_merge_into_left(struct bplus_tree *tree, struct bplus_node *node,
                                      struct bplus_node *left, struct bplus_node *parent,
                                      int parent_key_index, int remove)
@@ -676,6 +709,7 @@ static void non_leaf_merge_into_left(struct bplus_tree *tree, struct bplus_node 
         left->children += node->children - 1;
 }
 
+/* 내부 노드가 부족해졌을 때 오른쪽 형제의 첫 child를 빌려 온다. */
 static void non_leaf_shift_from_right(struct bplus_tree *tree, struct bplus_node *node,
                                       struct bplus_node *right, struct bplus_node *parent,
                                       int parent_key_index)
@@ -696,6 +730,7 @@ static void non_leaf_shift_from_right(struct bplus_tree *tree, struct bplus_node
         right->children--;
 }
 
+/* 내부 노드가 부족해졌을 때 오른쪽 형제를 현재 노드로 병합한다. */
 static void non_leaf_merge_from_right(struct bplus_tree *tree, struct bplus_node *node,
                                       struct bplus_node *right, struct bplus_node *parent,
                                       int parent_key_index)
@@ -717,6 +752,7 @@ static void non_leaf_merge_from_right(struct bplus_tree *tree, struct bplus_node
         node->children += right->children - 1;
 }
 
+/* 내부 노드에서 key 하나와 그 오른쪽 child 포인터 하나를 제거한다. */
 static inline void non_leaf_simple_remove(struct bplus_tree *tree, struct bplus_node *node, int remove)
 {
         assert(node->children >= 2);
@@ -725,6 +761,7 @@ static inline void non_leaf_simple_remove(struct bplus_tree *tree, struct bplus_
         node->children--;
 }
 
+/* 내부 노드에서 key를 제거하고 부족하면 형제 재분배나 병합을 수행한다. */
 static void non_leaf_remove(struct bplus_tree *tree, struct bplus_node *node, int remove)
 {
         if (node->parent == INVALID_OFFSET) {
@@ -791,6 +828,7 @@ static void non_leaf_remove(struct bplus_tree *tree, struct bplus_node *node, in
         }
 }
 
+/* leaf가 부족해졌을 때 왼쪽 형제의 마지막 entry를 빌려 온다. */
 static void leaf_shift_from_left(struct bplus_tree *tree, struct bplus_node *leaf,
                                  struct bplus_node *left, struct bplus_node *parent,
                                  int parent_key_index, int remove)
@@ -808,6 +846,7 @@ static void leaf_shift_from_left(struct bplus_tree *tree, struct bplus_node *lea
         key(parent)[parent_key_index] = key(leaf)[0];
 }
 
+/* leaf가 부족해졌을 때 현재 leaf를 왼쪽 형제와 병합한다. */
 static void leaf_merge_into_left(struct bplus_tree *tree, struct bplus_node *leaf,
                                  struct bplus_node *left, int parent_key_index, int remove)
 {
@@ -819,6 +858,7 @@ static void leaf_merge_into_left(struct bplus_tree *tree, struct bplus_node *lea
         left->children += leaf->children - 1;
 }
 
+/* leaf가 부족해졌을 때 오른쪽 형제의 첫 entry를 빌려 온다. */
 static void leaf_shift_from_right(struct bplus_tree *tree, struct bplus_node *leaf,
                                   struct bplus_node *right, struct bplus_node *parent,
                                   int parent_key_index)
@@ -837,6 +877,7 @@ static void leaf_shift_from_right(struct bplus_tree *tree, struct bplus_node *le
         key(parent)[parent_key_index] = key(right)[0];
 }
 
+/* 오른쪽 leaf 형제의 모든 entry를 현재 leaf 뒤에 붙인다. */
 static inline void leaf_merge_from_right(struct bplus_tree *tree, struct bplus_node *leaf,
                                          struct bplus_node *right)
 {
@@ -845,6 +886,7 @@ static inline void leaf_merge_from_right(struct bplus_tree *tree, struct bplus_n
         leaf->children += right->children;
 }
 
+/* leaf에서 entry 하나를 제거하고 뒤쪽 entry를 앞으로 당긴다. */
 static inline void leaf_simple_remove(struct bplus_tree *tree, struct bplus_node *leaf, int remove)
 {
         memmove(&key(leaf)[remove], &key(leaf)[remove + 1], (leaf->children - remove - 1) * sizeof(key_t));
@@ -852,6 +894,7 @@ static inline void leaf_simple_remove(struct bplus_tree *tree, struct bplus_node
         leaf->children--;
 }
 
+/* leaf에서 key를 삭제하고 부족하면 형제 재분배나 병합을 수행한다. */
 static int leaf_remove(struct bplus_tree *tree, struct bplus_node *leaf, key_t key)
 {
         int remove = key_binary_search(leaf, key);
@@ -928,6 +971,7 @@ static int leaf_remove(struct bplus_tree *tree, struct bplus_node *leaf, key_t k
         return 0;
 }
 
+/* root부터 삭제 대상 leaf까지 내려가 key를 제거한다. */
 static int bplus_tree_delete(struct bplus_tree *tree, key_t key)
 {
         struct bplus_node *node = node_seek(tree, tree->root);
@@ -947,11 +991,13 @@ static int bplus_tree_delete(struct bplus_tree *tree, key_t key)
         return -1;
 }
 
+/* 공개 API: key 하나를 검색해 연결된 data 값을 반환한다. */
 long bplus_tree_get(struct bplus_tree *tree, key_t key)
 {
         return bplus_tree_search(tree, key);
 }
 
+/* 공개 API: data가 0이면 삭제, 0이 아니면 key/data를 삽입한다. */
 int bplus_tree_put(struct bplus_tree *tree, key_t key, long data)
 {
         if (data) {
@@ -961,6 +1007,7 @@ int bplus_tree_put(struct bplus_tree *tree, key_t key, long data)
         }
 }
 
+/* 공개 API: 두 key 사이의 범위를 leaf 링크를 따라 훑고 마지막 data 값을 반환한다. */
 long bplus_tree_get_range(struct bplus_tree *tree, key_t key1, key_t key2)
 {
         long start = -1;
@@ -998,17 +1045,74 @@ long bplus_tree_get_range(struct bplus_tree *tree, key_t key1, key_t key2)
         return start;
 }
 
+/* 공개 API: start_key가 들어갈 leaf부터 next 링크를 따라 leaf_count개 leaf의 data를 모은다. */
+int bplus_tree_scan_leafs_from(struct bplus_tree *tree, key_t start_key, int leaf_count, long *values, int max_values)
+{
+        int count = 0;
+        int visited_leaf_count = 0;
+        struct bplus_node *node;
+        int i;
+
+        if (tree == NULL || leaf_count <= 0 || max_values < 0 || (max_values > 0 && values == NULL)) {
+                return -1;
+        }
+
+        if (max_values == 0) {
+                return 0;
+        }
+
+        node = node_seek(tree, tree->root);
+        while (node != NULL && !is_leaf(node)) {
+                i = key_binary_search(node, start_key);
+                if (i >= 0) {
+                        node = node_seek(tree, sub(node)[i + 1]);
+                } else {
+                        i = -i - 1;
+                        node = node_seek(tree, sub(node)[i]);
+                }
+        }
+
+        if (node == NULL) {
+                return 0;
+        }
+
+        i = key_binary_search(node, start_key);
+        if (i < 0) {
+                i = -i - 1;
+        }
+
+        while (node != NULL && visited_leaf_count < leaf_count && count < max_values) {
+                visited_leaf_count++;
+
+                while (i < node->children && count < max_values) {
+                        values[count++] = data(node)[i++];
+                }
+
+                if (count >= max_values || visited_leaf_count >= leaf_count) {
+                        break;
+                }
+
+                node = node_seek(tree, node->next);
+                i = 0;
+        }
+
+        return count;
+}
+
+/* 인덱스 본문 파일을 열거나 없으면 생성한다. */
 int bplus_open(char *filename)
 {
         return open(filename, O_CREAT | O_RDWR, 0644);
 }
 
+/* 인덱스 본문 파일을 동기화한 뒤 닫는다. */
 void bplus_close(int fd)
 {
         fsync(fd);
         close(fd);
 }
 
+/* boot 파일에 저장된 고정 길이 16진수 문자열을 offset 값으로 바꾼다. */
 static off_t str_to_hex(char *c, int len)
 {
         off_t offset = 0;
@@ -1027,6 +1131,7 @@ static off_t str_to_hex(char *c, int len)
         return offset;
 }
 
+/* offset 값을 boot 파일에 저장할 고정 길이 16진수 문자열로 바꾼다. */
 static inline void hex_to_str(off_t offset, char *buf, int len)
 {
         const static char *hex = "0123456789ABCDEF";
@@ -1036,6 +1141,7 @@ static inline void hex_to_str(off_t offset, char *buf, int len)
         }
 }
 
+/* boot 파일에서 offset 하나를 읽는다. */
 static inline off_t offset_load(int fd)
 {
         char buf[ADDR_STR_WIDTH];
@@ -1043,6 +1149,7 @@ static inline off_t offset_load(int fd)
         return len > 0 ? str_to_hex(buf, sizeof(buf)) : INVALID_OFFSET;
 }
 
+/* boot 파일에 offset 하나를 기록한다. */
 static inline ssize_t offset_store(int fd, off_t offset)
 {
         char buf[ADDR_STR_WIDTH];
@@ -1050,6 +1157,7 @@ static inline ssize_t offset_store(int fd, off_t offset)
         return write(fd, buf, sizeof(buf));
 }
 
+/* 공개 API: B+Tree 파일과 boot 메타데이터를 열고 트리 핸들을 초기화한다. */
 struct bplus_tree *bplus_tree_init(char *filename, int block_size)
 {
         int i;
@@ -1120,6 +1228,7 @@ struct bplus_tree *bplus_tree_init(char *filename, int block_size)
         return tree;
 }
 
+/* 공개 API: root/file size/free block 정보를 boot 파일에 저장하고 자원을 해제한다. */
 void bplus_tree_deinit(struct bplus_tree *tree)
 {
         int fd = open(tree->filename, O_CREAT | O_RDWR, 0644);
@@ -1155,12 +1264,14 @@ struct node_backlog {
         int next_sub_idx;
 };
 
+/* 디버그 출력용: 내부 노드의 child 개수를 반환한다. */
 static inline int children(struct bplus_node *node)
 {
         assert(!is_leaf(node));
         return node->children;
 }
 
+/* 디버그 출력용: 노드가 가진 key 목록을 한 줄로 출력한다. */
 static void node_key_dump(struct bplus_node *node)
 {
         int i;
@@ -1178,6 +1289,7 @@ static void node_key_dump(struct bplus_node *node)
         printf("\n");
 }
 
+/* 디버그 출력용: 트리 모양을 들여쓰기 형태로 그릴 때 노드 한 줄을 출력한다. */
 static void draw(struct bplus_tree *tree, struct bplus_node *node, struct node_backlog *stack, int level)
 {
         int i;
@@ -1195,6 +1307,7 @@ static void draw(struct bplus_tree *tree, struct bplus_node *node, struct node_b
         node_key_dump(node);
 }
 
+/* 공개 디버그 API: 트리를 DFS로 순회하며 key 구조를 출력한다. */
 void bplus_tree_dump(struct bplus_tree *tree)
 {
         int level = 0;

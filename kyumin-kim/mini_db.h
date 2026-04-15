@@ -22,12 +22,14 @@ typedef enum {
 /* 공유 계약: 3.3 SELECT id 조건 조회 파싱 결과를 담는다. */
 typedef enum {
     SELECT_CONDITION_NONE = 0,
-    SELECT_CONDITION_ID_EQUALS
+    SELECT_CONDITION_ID_EQUALS,
+    SELECT_CONDITION_ID_RANGE
 } SelectConditionType;
 
 typedef struct {
     SelectConditionType type;
     int id_value;
+    int id_end_value;
 } SelectCondition;
 
 /* 공유 계약: 6.2 id와 row 위치 연결에서 사용하는 파일 내 위치다. */
@@ -63,5 +65,7 @@ int db_index_open_table(const TableMetadata *table, char *error_message, size_t 
 void db_index_shutdown_all(void);
 int db_index_get(const char *table_name, int id, RowLocation *location);
 int db_index_put(const char *table_name, int id, RowLocation location);
+int db_index_scan_leafs_from(const char *table_name, int start_id, int leaf_count, RowLocation *locations,
+                             int max_locations);
 
 #endif

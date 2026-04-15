@@ -127,6 +127,45 @@ int db_index_put(const char *table_name, int id, RowLocation location) {
     return bplus_tree_put(handle->tree, id, stored_offset) == 0 ? 1 : -1;
 }
 
+/* 6.5 leaf 스캔 경로 제공: start_id가 들어갈 leaf부터 여러 leaf의 row 위치를 모은다. */
+int db_index_scan_leafs_from(const char *table_name, int start_id, int leaf_count, RowLocation *locations,
+                             int max_locations) {
+    IndexHandle *handle = find_index_handle(table_name);
+    long *stored_offsets;
+    int count;
+
+    if (handle == NULL || handle->tree == NULL || leaf_count <= 0 || max_locations < 0 ||
+        (max_locations > 0 && locations == NULL)) {
+        return -1;
+    }
+
+    if (max_locations == 0) {
+        return 0;
+    }
+
+    stored_offsets = malloc(sizeof(*stored_offsets) * (size_t) max_locations);
+    if (stored_offsets == NULL) {
+        return -1;
+    }
+
+    count = bplus_tree_scan_leafs_from(handle->tree, start_id, leaf_count, stored_offsets, max_locations);
+    if (count < 0) {
+        free(stored_offsets);
+        return -1;
+    }
+
+    for (int i = 0; i < count; i++) {
+        locations[i].offset = decode_offset_from_index(stored_offsets[i]);
+        if (locations[i].offset < 0 || locations[i].offset % handle->table->row_size != 0) {
+            free(stored_offsets);
+            return -1;
+        }
+    }
+
+    free(stored_offsets);
+    return count;
+}
+
 /* 1.3 인덱스 상태 확인 / 필요 시 복구: 데이터 파일 기준으로 B+Tree를 다시 만든다. */
 static int rebuild_index_from_data_file(IndexHandle *handle, char *error_message, size_t error_size) {
     FILE *file;

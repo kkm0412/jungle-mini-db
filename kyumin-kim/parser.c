@@ -74,7 +74,6 @@ static Plan parse_select(const char *sql) {
         if (!starts_with(parser.cursor, "where")) {
             set_parser_error(&parser, "지원하지 않는 SELECT 문법입니다");
         } else {
-            condition.type = SELECT_CONDITION_ID_EQUALS;
             expect_text(&parser, "where");
             skip_spaces(&parser);
             if (!parser.has_error && !starts_with(parser.cursor, "id")) {
@@ -82,12 +81,26 @@ static Plan parse_select(const char *sql) {
             }
             expect_text(&parser, "id");
             skip_spaces(&parser);
-            if (!parser.has_error && *parser.cursor != '=') {
+            if (!parser.has_error && starts_with(parser.cursor, "between")) {
+                condition.type = SELECT_CONDITION_ID_RANGE;
+                expect_text(&parser, "between");
+                skip_spaces(&parser);
+                read_integer(&parser, &condition.id_value);
+                skip_spaces(&parser);
+                if (!parser.has_error && !starts_with(parser.cursor, "and")) {
+                    set_parser_error(&parser, "지원하지 않는 SELECT 문법입니다");
+                }
+                expect_text(&parser, "and");
+                skip_spaces(&parser);
+                read_integer(&parser, &condition.id_end_value);
+            } else if (!parser.has_error && *parser.cursor == '=') {
+                condition.type = SELECT_CONDITION_ID_EQUALS;
+                expect_char(&parser, '=');
+                skip_spaces(&parser);
+                read_integer(&parser, &condition.id_value);
+            } else if (!parser.has_error) {
                 set_parser_error(&parser, "지원하지 않는 SELECT 문법입니다");
             }
-            expect_char(&parser, '=');
-            skip_spaces(&parser);
-            read_integer(&parser, &condition.id_value);
             skip_spaces(&parser);
             if (!parser.has_error && *parser.cursor != ';') {
                 set_parser_error(&parser, "지원하지 않는 SELECT 문법입니다");

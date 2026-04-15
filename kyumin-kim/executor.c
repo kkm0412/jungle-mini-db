@@ -9,11 +9,13 @@
 static void execute_select(const Plan *plan);
 static void execute_select_all_fixed_rows(const TableMetadata *table);
 static void execute_select_by_id(const Plan *plan, const TableMetadata *table);
+static void execute_select_by_id_range(const Plan *plan, const TableMetadata *table);
 static void execute_insert(const Plan *plan);
 static void print_columns(const TableMetadata *table);
 static int encode_fixed_row(const Plan *plan, char fixed_row[ROW_SIZE]);
 static int decode_fixed_row(const char fixed_row[ROW_SIZE], char *logical_row, size_t logical_row_size);
 static int parse_id_value(const char *text, int *id);
+static int extract_logical_row_id(const char *logical_row, int *id);
 static int read_fixed_row_at(const TableMetadata *table, RowLocation location, char fixed_row[ROW_SIZE]);
 
 /* 4.1 실행 분기: 파싱된 계획을 SELECT 또는 INSERT 실행으로 보낸다. */
@@ -47,6 +49,11 @@ static void execute_select(const Plan *plan) {
 
     if (plan->condition.type == SELECT_CONDITION_ID_EQUALS) {
         execute_select_by_id(plan, table);
+        return;
+    }
+
+    if (plan->condition.type == SELECT_CONDITION_ID_RANGE) {
+        execute_select_by_id_range(plan, table);
         return;
     }
 
@@ -108,6 +115,62 @@ static void execute_select_by_id(const Plan *plan, const TableMetadata *table) {
     }
 
     printf("%s\n", logical_row);
+}
+
+/* 4.3 SELECT id 범위 조회: B+Tree leaf 링크를 따라 row 위치를 모으고 범위 안의 row만 출력한다. */
+static void execute_select_by_id_range(const Plan *plan, const TableMetadata *table) {
+    RowLocation *locations;
+    long range_size;
+    int count;
+
+    if (plan->condition.id_value > plan->condition.id_end_value) {
+        printf("조회 범위가 올바르지 않습니다\n");
+        return;
+    }
+
+    range_size = (long) plan->condition.id_end_value - plan->condition.id_value + 1;
+    if (range_size <= 0 || range_size > INT_MAX) {
+        printf("조회 범위가 올바르지 않습니다\n");
+        return;
+    }
+
+    locations = malloc(sizeof(*locations) * (size_t) range_size);
+    if (locations == NULL) {
+        printf("조회 결과를 준비할 수 없습니다\n");
+        return;
+    }
+
+    count = db_index_scan_leafs_from(plan->table_name, plan->condition.id_value, (int) range_size, locations,
+                                     (int) range_size);
+    if (count < 0) {
+        printf("인덱스를 조회할 수 없습니다\n");
+        free(locations);
+        return;
+    }
+
+    print_columns(table);
+    for (int i = 0; i < count; i++) {
+        char fixed_row[ROW_SIZE];
+        char logical_row[MAX_INPUT_SIZE];
+        int id;
+
+        if (!read_fixed_row_at(table, locations[i], fixed_row) ||
+            !decode_fixed_row(fixed_row, logical_row, sizeof(logical_row)) ||
+            !extract_logical_row_id(logical_row, &id)) {
+            printf("데이터 파일이 올바르지 않습니다\n");
+            free(locations);
+            return;
+        }
+
+        if (id > plan->condition.id_end_value) {
+            break;
+        }
+        if (id >= plan->condition.id_value) {
+            printf("%s\n", logical_row);
+        }
+    }
+
+    free(locations);
 }
 
 /* 4.4 INSERT 행 추가: 고정 길이 row를 파일 끝에 쓰고 인덱스를 갱신한다. */
@@ -238,6 +301,26 @@ static int parse_id_value(const char *text, int *id) {
 
     *id = (int) parsed;
     return 1;
+}
+
+/* 내부 구현: CSV 형태의 논리 row에서 첫 번째 컬럼 id만 정수로 추출한다. */
+static int extract_logical_row_id(const char *logical_row, int *id) {
+    char id_text[MAX_VALUE_SIZE];
+    const char *comma = strchr(logical_row, ',');
+    size_t length;
+
+    if (comma == NULL) {
+        return 0;
+    }
+
+    length = (size_t) (comma - logical_row);
+    if (length == 0 || length >= sizeof(id_text)) {
+        return 0;
+    }
+
+    memcpy(id_text, logical_row, length);
+    id_text[length] = '\0';
+    return parse_id_value(id_text, id);
 }
 
 /* 5.4 위치 기반 읽기/쓰기: 인덱스가 알려준 byte offset에서 fixed row 하나를 읽는다. */

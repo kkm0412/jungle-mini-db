@@ -128,6 +128,7 @@ void bplus_tree_dump(struct bplus_tree *tree);
 long bplus_tree_get(struct bplus_tree *tree, key_t key);
 int bplus_tree_put(struct bplus_tree *tree, key_t key, long data);
 long bplus_tree_get_range(struct bplus_tree *tree, key_t key1, key_t key2);
+int bplus_tree_scan_leafs_from(struct bplus_tree *tree, key_t start_key, int leaf_count, long *values, int max_values);
 struct bplus_tree *bplus_tree_init(char *filename, int block_size);
 void bplus_tree_deinit(struct bplus_tree *tree);
 int bplus_open(char *filename);
