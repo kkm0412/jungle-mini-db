@@ -4,64 +4,38 @@
 #include <string.h>
 
 #include "mini_db.h"
+#include "thirdparty/bplustree.h"
 
-#define BPLUS_MAX_KEYS 31
-#define INDEX_HEADER "JMDBIDX1"
-
-typedef struct BPlusNode {
-    int is_leaf;
-    int key_count;
-    int keys[BPLUS_MAX_KEYS + 1];
-    long values[BPLUS_MAX_KEYS + 1];
-    struct BPlusNode *children[BPLUS_MAX_KEYS + 2];
-} BPlusNode;
-
-typedef struct {
-    BPlusNode *root;
-    size_t size;
-} BPlusTree;
+#define BPLUS_BLOCK_SIZE 4096
 
 typedef struct {
     const TableMetadata *table;
-    BPlusTree tree;
+    struct bplus_tree *tree;
 } IndexHandle;
 
-/* 파일 안에서만 사용: B+Tree 구현과 테이블별 인덱스 관리 함수 목록이다. */
-static BPlusNode *create_node(int is_leaf);
-static void bplus_tree_clear(BPlusTree *tree);
-static void bplus_tree_free_node(BPlusNode *node);
-static int bplus_tree_search(const BPlusTree *tree, int key, long *value);
-static int bplus_tree_insert(BPlusTree *tree, int key, long value);
-static int bplus_tree_insert_recursive(BPlusNode *node, int key, long value, int *promoted_key,
-                                       BPlusNode **promoted_child);
-static int bplus_tree_insert_into_leaf(BPlusNode *node, int key, long value, int *promoted_key,
-                                       BPlusNode **promoted_child);
-static int bplus_tree_insert_into_internal(BPlusNode *node, int child_index, int key, BPlusNode *right_child,
-                                           int *promoted_key, BPlusNode **promoted_child);
-static int bplus_tree_child_index(const BPlusNode *node, int key);
-static int bplus_tree_write_entries(FILE *file, const BPlusNode *node);
-
+/* 파일 안에서만 사용: 테이블별 B+Tree 라이브러리 핸들을 관리하는 함수 목록이다. */
 static IndexHandle *find_index_handle(const char *table_name);
 static IndexHandle *ensure_index_handle(const TableMetadata *table);
 static int ensure_data_file(const TableMetadata *table, char *error_message, size_t error_size);
-static int load_index_file(IndexHandle *handle, char *error_message, size_t error_size);
+static int init_tree(IndexHandle *handle, char *error_message, size_t error_size);
+static int index_files_exist(const TableMetadata *table);
+static void remove_index_files(const TableMetadata *table);
 static int validate_index_against_data(IndexHandle *handle, char *error_message, size_t error_size);
 static int rebuild_index_from_data_file(IndexHandle *handle, char *error_message, size_t error_size);
-static int persist_full_index(IndexHandle *handle);
-static int append_index_entry(IndexHandle *handle, int id, long offset);
 static int read_data_row(FILE *file, const TableMetadata *table, long offset, char fixed_row[ROW_SIZE]);
 static int extract_id_from_fixed_row(const char fixed_row[ROW_SIZE], int *id);
 static int parse_int_text(const char *text, int *value);
 static long get_file_size(FILE *file);
+static long encode_offset_for_index(long offset);
+static long decode_offset_from_index(long stored_offset);
 static void set_error(char *error_message, size_t error_size, const char *message);
 
 static IndexHandle INDEX_HANDLES[MAX_VALUES];
 static int INDEX_HANDLE_COUNT = 0;
 
-/* 인덱스 준비: 기존 인덱스를 열고, 없거나 손상된 경우 데이터 파일 기준으로 다시 만든다. */
+/* 인덱스 준비: 외부 B+Tree 파일을 열고, 없거나 불일치하면 데이터 파일 기준으로 복구한다. */
 int db_index_open_table(const TableMetadata *table, char *error_message, size_t error_size) {
     IndexHandle *handle;
-    int load_result;
     int validate_result;
 
     if (table->row_size != ROW_SIZE) {
@@ -79,30 +53,34 @@ int db_index_open_table(const TableMetadata *table, char *error_message, size_t 
         return -1;
     }
 
-    bplus_tree_clear(&handle->tree);
-    load_result = load_index_file(handle, error_message, error_size);
-    if (load_result < 0) {
+    if (!index_files_exist(table)) {
+        return rebuild_index_from_data_file(handle, error_message, error_size);
+    }
+
+    if (!init_tree(handle, error_message, error_size)) {
         return -1;
     }
 
-    if (load_result > 0) {
-        validate_result = validate_index_against_data(handle, error_message, error_size);
-        if (validate_result < 0) {
-            return -1;
-        }
-        if (validate_result > 0) {
-            return 0;
-        }
+    validate_result = validate_index_against_data(handle, error_message, error_size);
+    if (validate_result < 0) {
+        return -1;
+    }
+    if (validate_result > 0) {
+        return 0;
     }
 
-    bplus_tree_clear(&handle->tree);
+    bplus_tree_deinit(handle->tree);
+    handle->tree = NULL;
     return rebuild_index_from_data_file(handle, error_message, error_size);
 }
 
-/* 종료 정리: 모든 테이블 인덱스 트리 메모리를 해제한다. */
+/* 종료 정리: 외부 B+Tree가 boot 파일과 데이터 파일을 flush하도록 닫는다. */
 void db_index_shutdown_all(void) {
     for (int i = 0; i < INDEX_HANDLE_COUNT; i++) {
-        bplus_tree_clear(&INDEX_HANDLES[i].tree);
+        if (INDEX_HANDLES[i].tree != NULL) {
+            bplus_tree_deinit(INDEX_HANDLES[i].tree);
+            INDEX_HANDLES[i].tree = NULL;
+        }
         INDEX_HANDLES[i].table = NULL;
     }
 
@@ -112,273 +90,41 @@ void db_index_shutdown_all(void) {
 /* B+Tree 조회: id에 연결된 fixed row byte offset을 반환한다. */
 int db_index_get(const char *table_name, int id, RowLocation *location) {
     IndexHandle *handle = find_index_handle(table_name);
-    long offset;
+    long stored_offset;
 
-    if (handle == NULL) {
+    if (handle == NULL || handle->tree == NULL) {
         return -1;
     }
 
-    if (!bplus_tree_search(&handle->tree, id, &offset)) {
+    stored_offset = bplus_tree_get(handle->tree, id);
+    if (stored_offset < 0) {
         return 0;
     }
 
-    location->offset = offset;
+    location->offset = decode_offset_from_index(stored_offset);
+    if (location->offset < 0 || location->offset % handle->table->row_size != 0) {
+        return -1;
+    }
+
     return 1;
 }
 
-/* B+Tree 삽입: 새 id와 fixed row byte offset을 인덱스에 등록하고 파일에도 기록한다. */
+/* B+Tree 삽입: 라이브러리 특성상 실제 offset 대신 offset + 1을 저장한다. */
 int db_index_put(const char *table_name, int id, RowLocation location) {
     IndexHandle *handle = find_index_handle(table_name);
-    int insert_result;
+    long stored_offset;
 
-    if (handle == NULL || location.offset < 0 || location.offset % handle->table->row_size != 0) {
+    if (handle == NULL || handle->tree == NULL || location.offset < 0 ||
+        location.offset % handle->table->row_size != 0) {
         return -1;
     }
 
-    insert_result = bplus_tree_insert(&handle->tree, id, location.offset);
-    if (insert_result <= 0) {
-        return insert_result;
-    }
-
-    if (!append_index_entry(handle, id, location.offset)) {
+    stored_offset = encode_offset_for_index(location.offset);
+    if (stored_offset <= 0) {
         return -1;
     }
 
-    return 1;
-}
-
-static BPlusNode *create_node(int is_leaf) {
-    BPlusNode *node = calloc(1, sizeof(BPlusNode));
-
-    if (node == NULL) {
-        return NULL;
-    }
-
-    node->is_leaf = is_leaf;
-    return node;
-}
-
-static void bplus_tree_clear(BPlusTree *tree) {
-    bplus_tree_free_node(tree->root);
-    tree->root = NULL;
-    tree->size = 0;
-}
-
-static void bplus_tree_free_node(BPlusNode *node) {
-    if (node == NULL) {
-        return;
-    }
-
-    if (!node->is_leaf) {
-        for (int i = 0; i <= node->key_count; i++) {
-            bplus_tree_free_node(node->children[i]);
-        }
-    }
-
-    free(node);
-}
-
-static int bplus_tree_search(const BPlusTree *tree, int key, long *value) {
-    BPlusNode *node = tree->root;
-
-    while (node != NULL && !node->is_leaf) {
-        node = node->children[bplus_tree_child_index(node, key)];
-    }
-
-    if (node == NULL) {
-        return 0;
-    }
-
-    for (int i = 0; i < node->key_count; i++) {
-        if (node->keys[i] == key) {
-            *value = node->values[i];
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-static int bplus_tree_insert(BPlusTree *tree, int key, long value) {
-    int promoted_key;
-    BPlusNode *promoted_child = NULL;
-    int result;
-
-    if (tree->root == NULL) {
-        tree->root = create_node(1);
-        if (tree->root == NULL) {
-            return -1;
-        }
-
-        tree->root->keys[0] = key;
-        tree->root->values[0] = value;
-        tree->root->key_count = 1;
-        tree->size = 1;
-        return 1;
-    }
-
-    result = bplus_tree_insert_recursive(tree->root, key, value, &promoted_key, &promoted_child);
-    if (result < 0 || result == 0) {
-        return result;
-    }
-
-    if (result == 2) {
-        BPlusNode *new_root = create_node(0);
-        if (new_root == NULL) {
-            return -1;
-        }
-
-        new_root->keys[0] = promoted_key;
-        new_root->children[0] = tree->root;
-        new_root->children[1] = promoted_child;
-        new_root->key_count = 1;
-        tree->root = new_root;
-    }
-
-    tree->size++;
-    return 1;
-}
-
-static int bplus_tree_insert_recursive(BPlusNode *node, int key, long value, int *promoted_key,
-                                       BPlusNode **promoted_child) {
-    int child_index;
-    int child_promoted_key;
-    BPlusNode *child_promoted_node = NULL;
-    int result;
-
-    if (node->is_leaf) {
-        return bplus_tree_insert_into_leaf(node, key, value, promoted_key, promoted_child);
-    }
-
-    child_index = bplus_tree_child_index(node, key);
-    result = bplus_tree_insert_recursive(node->children[child_index], key, value, &child_promoted_key,
-                                         &child_promoted_node);
-    if (result != 2) {
-        return result;
-    }
-
-    return bplus_tree_insert_into_internal(node, child_index, child_promoted_key, child_promoted_node, promoted_key,
-                                           promoted_child);
-}
-
-static int bplus_tree_insert_into_leaf(BPlusNode *node, int key, long value, int *promoted_key,
-                                       BPlusNode **promoted_child) {
-    int insert_index = 0;
-    int split_index;
-    BPlusNode *new_leaf;
-
-    while (insert_index < node->key_count && node->keys[insert_index] < key) {
-        insert_index++;
-    }
-
-    if (insert_index < node->key_count && node->keys[insert_index] == key) {
-        return 0;
-    }
-
-    for (int i = node->key_count; i > insert_index; i--) {
-        node->keys[i] = node->keys[i - 1];
-        node->values[i] = node->values[i - 1];
-    }
-
-    node->keys[insert_index] = key;
-    node->values[insert_index] = value;
-    node->key_count++;
-
-    if (node->key_count <= BPLUS_MAX_KEYS) {
-        return 1;
-    }
-
-    new_leaf = create_node(1);
-    if (new_leaf == NULL) {
-        return -1;
-    }
-
-    split_index = node->key_count / 2;
-    new_leaf->key_count = node->key_count - split_index;
-    for (int i = 0; i < new_leaf->key_count; i++) {
-        new_leaf->keys[i] = node->keys[split_index + i];
-        new_leaf->values[i] = node->values[split_index + i];
-    }
-
-    node->key_count = split_index;
-    *promoted_key = new_leaf->keys[0];
-    *promoted_child = new_leaf;
-    return 2;
-}
-
-static int bplus_tree_insert_into_internal(BPlusNode *node, int child_index, int key, BPlusNode *right_child,
-                                           int *promoted_key, BPlusNode **promoted_child) {
-    int split_index;
-    BPlusNode *new_internal;
-
-    for (int i = node->key_count; i > child_index; i--) {
-        node->keys[i] = node->keys[i - 1];
-    }
-
-    for (int i = node->key_count + 1; i > child_index + 1; i--) {
-        node->children[i] = node->children[i - 1];
-    }
-
-    node->keys[child_index] = key;
-    node->children[child_index + 1] = right_child;
-    node->key_count++;
-
-    if (node->key_count <= BPLUS_MAX_KEYS) {
-        return 1;
-    }
-
-    new_internal = create_node(0);
-    if (new_internal == NULL) {
-        return -1;
-    }
-
-    split_index = node->key_count / 2;
-    *promoted_key = node->keys[split_index];
-    new_internal->key_count = node->key_count - split_index - 1;
-    for (int i = 0; i < new_internal->key_count; i++) {
-        new_internal->keys[i] = node->keys[split_index + 1 + i];
-    }
-    for (int i = 0; i <= new_internal->key_count; i++) {
-        new_internal->children[i] = node->children[split_index + 1 + i];
-    }
-
-    node->key_count = split_index;
-    *promoted_child = new_internal;
-    return 2;
-}
-
-static int bplus_tree_child_index(const BPlusNode *node, int key) {
-    int index = 0;
-
-    while (index < node->key_count && key >= node->keys[index]) {
-        index++;
-    }
-
-    return index;
-}
-
-static int bplus_tree_write_entries(FILE *file, const BPlusNode *node) {
-    if (node == NULL) {
-        return 1;
-    }
-
-    if (node->is_leaf) {
-        for (int i = 0; i < node->key_count; i++) {
-            if (fprintf(file, "%d %ld\n", node->keys[i], node->values[i]) < 0) {
-                return 0;
-            }
-        }
-
-        return 1;
-    }
-
-    for (int i = 0; i <= node->key_count; i++) {
-        if (!bplus_tree_write_entries(file, node->children[i])) {
-            return 0;
-        }
-    }
-
-    return 1;
+    return bplus_tree_put(handle->tree, id, stored_offset) == 0 ? 1 : -1;
 }
 
 static IndexHandle *find_index_handle(const char *table_name) {
@@ -404,8 +150,7 @@ static IndexHandle *ensure_index_handle(const TableMetadata *table) {
 
     handle = &INDEX_HANDLES[INDEX_HANDLE_COUNT];
     handle->table = table;
-    handle->tree.root = NULL;
-    handle->tree.size = 0;
+    handle->tree = NULL;
     INDEX_HANDLE_COUNT++;
     return handle;
 }
@@ -422,54 +167,72 @@ static int ensure_data_file(const TableMetadata *table, char *error_message, siz
     return 1;
 }
 
-static int load_index_file(IndexHandle *handle, char *error_message, size_t error_size) {
-    FILE *file = fopen(handle->table->index_file_path, "r");
-    char line[MAX_INPUT_SIZE];
+static int init_tree(IndexHandle *handle, char *error_message, size_t error_size) {
+    handle->tree = bplus_tree_init((char *) handle->table->index_file_path, BPLUS_BLOCK_SIZE);
+    if (handle->tree == NULL) {
+        set_error(error_message, error_size, "인덱스를 준비할 수 없습니다");
+        return 0;
+    }
 
-    (void) error_message;
-    (void) error_size;
+    return 1;
+}
+
+static int index_files_exist(const TableMetadata *table) {
+    char boot_path[MAX_INPUT_SIZE];
+    FILE *index_file;
+    FILE *boot_file;
+
+    snprintf(boot_path, sizeof(boot_path), "%s.boot", table->index_file_path);
+    index_file = fopen(table->index_file_path, "rb");
+    boot_file = fopen(boot_path, "rb");
+
+    if (index_file != NULL) {
+        fclose(index_file);
+    }
+    if (boot_file != NULL) {
+        fclose(boot_file);
+    }
+
+    return index_file != NULL && boot_file != NULL;
+}
+
+static void remove_index_files(const TableMetadata *table) {
+    char boot_path[MAX_INPUT_SIZE];
+
+    snprintf(boot_path, sizeof(boot_path), "%s.boot", table->index_file_path);
+    remove(table->index_file_path);
+    remove(boot_path);
+}
+
+static int validate_index_against_data(IndexHandle *handle, char *error_message, size_t error_size) {
+    FILE *file = fopen(handle->table->csv_file_path, "rb");
+    long file_size;
 
     if (file == NULL) {
-        return 0;
+        set_error(error_message, error_size, "CSV 파일을 열 수 없습니다");
+        return -1;
     }
 
-    if (fgets(line, sizeof(line), file) == NULL ||
-        (strcmp(line, INDEX_HEADER "\n") != 0 && strcmp(line, INDEX_HEADER "\r\n") != 0)) {
+    file_size = get_file_size(file);
+    if (file_size < 0 || file_size % handle->table->row_size != 0) {
         fclose(file);
-        return 0;
+        set_error(error_message, error_size, "데이터 파일이 올바르지 않습니다");
+        return -1;
     }
 
-    while (fgets(line, sizeof(line), file) != NULL) {
-        char *offset_text;
-        char *newline;
+    for (long offset = 0; offset < file_size; offset += handle->table->row_size) {
+        char fixed_row[ROW_SIZE];
         int id;
-        long offset;
+        long stored_offset;
 
-        newline = strchr(line, '\n');
-        if (newline != NULL) {
-            *newline = '\0';
-        }
-
-        offset_text = strchr(line, ' ');
-        if (offset_text == NULL) {
+        if (!read_data_row(file, handle->table, offset, fixed_row) || !extract_id_from_fixed_row(fixed_row, &id)) {
             fclose(file);
-            return 0;
+            set_error(error_message, error_size, "데이터 파일이 올바르지 않습니다");
+            return -1;
         }
 
-        *offset_text = '\0';
-        offset_text++;
-        if (!parse_int_text(line, &id)) {
-            fclose(file);
-            return 0;
-        }
-
-        offset = strtol(offset_text, &newline, 10);
-        if (*offset_text == '\0' || *newline != '\0' || offset < 0 || offset % handle->table->row_size != 0) {
-            fclose(file);
-            return 0;
-        }
-
-        if (bplus_tree_insert(&handle->tree, id, offset) != 1) {
+        stored_offset = bplus_tree_get(handle->tree, id);
+        if (stored_offset < 0 || decode_offset_from_index(stored_offset) != offset) {
             fclose(file);
             return 0;
         }
@@ -479,50 +242,21 @@ static int load_index_file(IndexHandle *handle, char *error_message, size_t erro
     return 1;
 }
 
-static int validate_index_against_data(IndexHandle *handle, char *error_message, size_t error_size) {
-    FILE *file = fopen(handle->table->csv_file_path, "rb");
-    long file_size;
-    size_t row_count = 0;
-
-    if (file == NULL) {
-        set_error(error_message, error_size, "CSV 파일을 열 수 없습니다");
-        return -1;
-    }
-
-    file_size = get_file_size(file);
-    if (file_size < 0 || file_size % handle->table->row_size != 0) {
-        fclose(file);
-        set_error(error_message, error_size, "데이터 파일이 올바르지 않습니다");
-        return -1;
-    }
-
-    for (long offset = 0; offset < file_size; offset += handle->table->row_size) {
-        char fixed_row[ROW_SIZE];
-        int id;
-        long indexed_offset;
-
-        if (!read_data_row(file, handle->table, offset, fixed_row) || !extract_id_from_fixed_row(fixed_row, &id)) {
-            fclose(file);
-            set_error(error_message, error_size, "데이터 파일이 올바르지 않습니다");
-            return -1;
-        }
-
-        if (!bplus_tree_search(&handle->tree, id, &indexed_offset) || indexed_offset != offset) {
-            fclose(file);
-            return 0;
-        }
-
-        row_count++;
-    }
-
-    fclose(file);
-    return row_count == handle->tree.size;
-}
-
 static int rebuild_index_from_data_file(IndexHandle *handle, char *error_message, size_t error_size) {
-    FILE *file = fopen(handle->table->csv_file_path, "rb");
+    FILE *file;
     long file_size;
 
+    if (handle->tree != NULL) {
+        bplus_tree_deinit(handle->tree);
+        handle->tree = NULL;
+    }
+
+    remove_index_files(handle->table);
+    if (!init_tree(handle, error_message, error_size)) {
+        return -1;
+    }
+
+    file = fopen(handle->table->csv_file_path, "rb");
     if (file == NULL) {
         set_error(error_message, error_size, "CSV 파일을 열 수 없습니다");
         return -1;
@@ -538,9 +272,10 @@ static int rebuild_index_from_data_file(IndexHandle *handle, char *error_message
     for (long offset = 0; offset < file_size; offset += handle->table->row_size) {
         char fixed_row[ROW_SIZE];
         int id;
+        long stored_offset = encode_offset_for_index(offset);
 
         if (!read_data_row(file, handle->table, offset, fixed_row) || !extract_id_from_fixed_row(fixed_row, &id) ||
-            bplus_tree_insert(&handle->tree, id, offset) != 1) {
+            stored_offset <= 0 || bplus_tree_put(handle->tree, id, stored_offset) != 0) {
             fclose(file);
             set_error(error_message, error_size, "데이터 파일이 올바르지 않습니다");
             return -1;
@@ -548,52 +283,7 @@ static int rebuild_index_from_data_file(IndexHandle *handle, char *error_message
     }
 
     fclose(file);
-    if (!persist_full_index(handle)) {
-        set_error(error_message, error_size, "인덱스를 갱신할 수 없습니다");
-        return -1;
-    }
-
     return 0;
-}
-
-static int persist_full_index(IndexHandle *handle) {
-    FILE *file = fopen(handle->table->index_file_path, "w");
-    int ok;
-
-    if (file == NULL) {
-        return 0;
-    }
-
-    ok = fprintf(file, "%s\n", INDEX_HEADER) >= 0 && bplus_tree_write_entries(file, handle->tree.root) &&
-         fflush(file) == 0;
-    fclose(file);
-    return ok;
-}
-
-static int append_index_entry(IndexHandle *handle, int id, long offset) {
-    FILE *file = fopen(handle->table->index_file_path, "a+");
-    long file_size;
-    int ok;
-
-    if (file == NULL) {
-        return 0;
-    }
-
-    fseek(file, 0, SEEK_END);
-    file_size = ftell(file);
-    if (file_size < 0) {
-        fclose(file);
-        return 0;
-    }
-
-    ok = 1;
-    if (file_size == 0) {
-        ok = fprintf(file, "%s\n", INDEX_HEADER) >= 0;
-    }
-
-    ok = ok && fprintf(file, "%d %ld\n", id, offset) >= 0 && fflush(file) == 0;
-    fclose(file);
-    return ok;
 }
 
 static int read_data_row(FILE *file, const TableMetadata *table, long offset, char fixed_row[ROW_SIZE]) {
@@ -668,6 +358,22 @@ static long get_file_size(FILE *file) {
     }
 
     return file_size;
+}
+
+static long encode_offset_for_index(long offset) {
+    if (offset == LONG_MAX) {
+        return -1;
+    }
+
+    return offset + 1;
+}
+
+static long decode_offset_from_index(long stored_offset) {
+    if (stored_offset <= 0) {
+        return -1;
+    }
+
+    return stored_offset - 1;
 }
 
 static void set_error(char *error_message, size_t error_size, const char *message) {

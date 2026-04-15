@@ -190,3 +190,4 @@ $RECYCLE.BIN/
 
 # Generated mini-db index files
 data/*.idx
+data/*.idx.boot

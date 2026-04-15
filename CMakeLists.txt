@@ -9,5 +9,6 @@ add_executable(
         parser.c
         executor.c
         db_index.c
+        thirdparty/bplustree.c
 )
 target_compile_definitions(jungle_mini_db PRIVATE PROJECT_ROOT_DIR="${CMAKE_SOURCE_DIR}")
