@@ -1,5 +1,7 @@
 # B-Tree 핵심 개념 정리
 
+> [Understanding B-Trees: The Data Structure Behind Modern Databases](https://youtu.be/K1a2Bk8NrYQ?si=KGgK1ygdtvOnHrtd) 자료의 내용을 기반으로 한다.
+
 이 문서는 B-Tree가 왜 데이터베이스와 파일 시스템에서 자주 사용되는지, 그리고 검색, 삽입, 삭제가 어떤 규칙으로 동작하는지 정리한다.
 
 핵심은 단순하다.
