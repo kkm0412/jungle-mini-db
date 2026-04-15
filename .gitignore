@@ -193,4 +193,4 @@ data/*.idx
 data/*.idx.boot
 
 # Generated benchmark outputs
-sijun-yang/benchmark-results/
+**/benchmark-results/
