@@ -23,6 +23,7 @@ static void expect_char(Parser *parser, char expected);
 static void expect_end(Parser *parser);
 static void read_name(Parser *parser, char *buffer, size_t buffer_size);
 static void read_integer(Parser *parser, int *value);
+static SelectCondition read_optional_select_condition(Parser *parser);
 static void read_until_semicolon(Parser *parser, char *buffer, size_t buffer_size);
 static Plan build_select_plan(Parser *parser, const char *table_name, SelectCondition condition);
 static Plan build_insert_plan(Parser *parser, const char *table_name, char *values_text);
@@ -69,32 +70,7 @@ static Plan parse_select(const char *sql) {
     skip_spaces(&parser);
     read_name(&parser, table_name, sizeof(table_name));
     skip_spaces(&parser);
-
-    if (!parser.has_error && *parser.cursor != ';') {
-        if (!starts_with(parser.cursor, "where")) {
-            set_parser_error(&parser, "지원하지 않는 SELECT 문법입니다");
-        } else {
-            condition.type = SELECT_CONDITION_ID_EQUALS;
-            expect_text(&parser, "where");
-            skip_spaces(&parser);
-            if (!parser.has_error && !starts_with(parser.cursor, "id")) {
-                set_parser_error(&parser, "지원하지 않는 SELECT 문법입니다");
-            }
-            expect_text(&parser, "id");
-            skip_spaces(&parser);
-            if (!parser.has_error && *parser.cursor != '=') {
-                set_parser_error(&parser, "지원하지 않는 SELECT 문법입니다");
-            }
-            expect_char(&parser, '=');
-            skip_spaces(&parser);
-            read_integer(&parser, &condition.id_value);
-            skip_spaces(&parser);
-            if (!parser.has_error && *parser.cursor != ';') {
-                set_parser_error(&parser, "지원하지 않는 SELECT 문법입니다");
-            }
-        }
-    }
-
+    condition = read_optional_select_condition(&parser);
     expect_char(&parser, ';');
     skip_spaces(&parser);
     expect_end(&parser);
@@ -245,21 +221,21 @@ static void read_integer(Parser *parser, int *value) {
 
     while (parser->cursor[length] >= '0' && parser->cursor[length] <= '9') {
         if (length + 1 >= sizeof(buffer)) {
-            set_parser_error(parser, "지원하지 않는 SELECT 문법입니다");
+            set_parser_error(parser, "지원하지 않는 SQL");
             return;
         }
         length++;
     }
 
     if (length == 0 || (length == 1 && parser->cursor[0] == '-')) {
-        set_parser_error(parser, "지원하지 않는 SELECT 문법입니다");
+        set_parser_error(parser, "지원하지 않는 SQL");
         return;
     }
 
     snprintf(buffer, sizeof(buffer), "%.*s", (int) length, parser->cursor);
     parsed = strtol(buffer, &end, 10);
     if (*end != '\0' || parsed < INT_MIN || parsed > INT_MAX) {
-        set_parser_error(parser, "지원하지 않는 SELECT 문법입니다");
+        set_parser_error(parser, "지원하지 않는 SQL");
         return;
     }
 
@@ -309,6 +285,27 @@ static Plan build_select_plan(Parser *parser, const char *table_name, SelectCond
     plan.condition = condition;
     snprintf(plan.table_name, sizeof(plan.table_name), "%s", table_name);
     return plan;
+}
+
+/* 내부 구현: SELECT 뒤의 선택적 `where id = 정수` 조건을 읽는다. */
+static SelectCondition read_optional_select_condition(Parser *parser) {
+    SelectCondition condition = {0};
+
+    if (parser->has_error || *parser->cursor == ';') {
+        return condition;
+    }
+
+    condition.type = SELECT_CONDITION_ID_EQUALS;
+    expect_text(parser, "where");
+    skip_spaces(parser);
+    expect_text(parser, "id");
+    skip_spaces(parser);
+    expect_char(parser, '=');
+    skip_spaces(parser);
+    read_integer(parser, &condition.id_value);
+    skip_spaces(parser);
+
+    return condition;
 }
 
 static Plan build_insert_plan(Parser *parser, const char *table_name, char *values_text) {
